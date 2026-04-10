@@ -1,0 +1,19 @@
+# Rust build artifacts
+target/
+
+# Backup files
+**/*.rs.bk
+
+# Local validator ledger and snapshots
+.anchor/
+test-ledger/
+
+# Dependencies
+node_modules/
+
+# --- Environment & Keys ---
+.env
+
+# IDE & OS
+.DS_Store
+.agents
