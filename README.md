@@ -1,170 +1,72 @@
-# TradeStars Arena (Solana)
+# TradeStars Arena
 
-This repo contains the Solana program for TradeStars arena custody and settlement.
+TradeStars mirrors Base deposits into Solana `tUSDC`, keeps `tUSDC` soulbound with Token-2022 `NonTransferable`, and enforces arena participation with burn-on-commit accounting.
 
-Current design goals:
-- no legacy/backward-compat layer
-- guaranteed prize support
-- claimless UX for winners and refunds
-- minimal entrypoint surface
+## Core model
 
-All AMM pricing, scoring, and leaderboard computation remain off-chain.
+- `deposit_collateral`
+  Anyone may submit a Base deposit attestation. The program verifies a secp256k1 signature from the configured EVM attester, creates a replay marker for `(base_tx_hash, log_index)`, mints `tUSDC`, and increases `UserAccount.total_balance`.
+- `create_arena`
+  The arena operator and creator co-sign. If the arena has a guaranteed prize, the creator burns that amount immediately and the program locks the same amount in the creator's `in_play_debt`.
+- `join_arena`
+  The user burns the full `entry_fee`, the program increases `in_play_debt`, records `fee_accrued`, and adds only the net entry amount to `total_pool`.
+- `post_settlement_root`
+  The operator posts one immutable Merkle root after `end_time`. That starts the dispute window.
+- `submit_dispute`
+  Each participating user may dispute once per settlement version. If disputes reach `>= 5%` of unique participants, the arena moves to `Disputed`.
+- `cancel_disputed_arena`
+  Anyone may cancel a disputed arena. Disputed arenas refund; they do not accept corrected roots.
+- `cancel_stale_arena`
+  If the operator never posts a root by `end_time + settlement_grace_period_seconds`, anyone may cancel and route the arena into refunds.
+- `settle_arena_batch` / `claim_winnings`
+  After `claimable_at`, the operator settles users in batches by default. Missed users can still claim directly.
+- `refund_arena_batch` / `claim_refund`
+  Cancelled arenas are refunded in operator batches by default, with a user fallback path.
+- `finalize_arena`
+  Anyone may finalize once all positions are resolved. Settled finalization mints fees to treasury and returns any unused creator guarantee. Cancelled finalization returns the full creator guarantee and mints no fees.
+- `withdraw_request`
+  Burns `tUSDC`, decreases `total_balance`, and emits the replay-safe withdrawal event for the Base release flow.
 
-## Scope
+## Fee lifecycle
 
-On-chain responsibilities:
-- collect entry fees in per-arena vaults
-- custody funds and collect platform fees
-- auto-fund overlay when guaranteed prize exceeds collected net
-- auto-pay winners in settlement batches
-- auto-refund users in cancellation batches
-Off-chain responsibilities:
-- trading engine / AMM
-- scoring and final ranking
-- payout plan generation
+Entry fees are collected at `join_arena`.
 
-## Accounts
+- The full `entry_fee` is burned when the user joins.
+- `fee_amount = floor(entry_fee * fee_bps / 10_000)`.
+- `fee_accrued += fee_amount` immediately.
+- Only `entry_fee - fee_amount` is added to `total_pool`.
+- If the arena is cancelled, users are refunded their full committed amount and no fee is minted.
+- If the arena settles, `fee_accrued` is minted to the treasury only on `finalize_arena`.
 
-- `PlatformConfig`: authority, fee recipient, fee bps, pause flag
-- `Arena`: pool accounting, settlement status, authority reference
-- `ArenaEntry`: participation proof + payout/refund settlement flags
+## Main invariants
 
-### PDA Seeds
+- `available_to_withdraw = total_balance - in_play_debt`
+- `tUSDC` cannot be peer-transferred
+- each `(base_tx_hash, log_index)` attestation can be processed once
+- each user can enter the same arena up to `10` times
+- guaranteed prizes are locked at arena creation, not funded later
+- joins and operator cancellation are only allowed before `start_time`
+- a settlement root can be posted only once, only after `end_time`
+- `total_pool = guaranteed_prize_reserved + (total_entry_fees_locked - fee_accrued)`
+- `total_claimed_payout <= total_pool`
+- disputed arenas can only cancel and refund
+- cancelled arenas refund the full committed amount
+- fees are minted to treasury only when a settled arena is finalized
 
-| Account | Seeds |
-|---------|-------|
-| `PlatformConfig` | `["config"]` |
-| `platform_vault` | `["platform_vault"]` |
-| `Arena` | `["arena", arena_id]` |
-| `arena_vault` | `["vault", arena_pubkey]` |
-| `ArenaEntry` | `["entry", arena_pubkey, user_pubkey, entry_number]` |
+## Trust assumptions
 
-## Entrypoints
+- Base deposit verification is a trusted-attester model, not a trustless bridge.
+- The configured EVM attester is trusted to sign only real Base deposit events for the configured Base contract and chain.
+- `deposit_collateral` verifies the attester signature and enforces replay protection, but it does not verify a Base event proof on-chain.
+- The configured `arena_operator` is trusted to create arenas and publish the settlement root.
+- Disputes have one on-chain effect in this version: if they reach `>= 5%`, the arena becomes `Disputed` and must refund.
 
-| Instruction | Signer | Description |
-|-------------|--------|-------------|
-| `initialize_platform` | authority | One-time setup: config PDA, platform vault |
-| `create_arena` | authority | Create arena + per-arena vault with validated params |
-| `enter_arena` | user | Pay entry fee, create entry PDA |
-| `settle_and_pay_batch` | authority | Finalize, fund overlay, pay winners in batch |
-| `cancel_arena` | authority | Transition arena from Open to Cancelled |
-| `refund_batch` | authority | Batch refund entries for cancelled arenas |
-| `withdraw_fees` | authority | Withdraw collected fees from platform vault |
-| `toggle_pause` | authority | Toggle platform pause flag |
-
-## State Machine
-
-```
-Open ──(end_time reached + settle_and_pay_batch)──> Finalized ──(all payouts done)──> Settled
-Open ──(cancel_arena)──> Cancelled
-```
-
-- `Open`: accepting entries (before `end_time`)
-- `Finalized`: fee collected, overlay funded, payouts in progress
-- `Settled`: terminal state, all payouts complete
-- `Cancelled`: terminal state, refunds in progress
-
-## Settlement Model
-
-`settle_and_pay_batch` does all settlement-critical actions:
-1. Collect platform fee (first call only, transitions Open to Finalized)
-2. Fund missing overlay from authority's token account (if guaranteed prize > collected net)
-3. Pay winners from arena vault via `remaining_accounts` pairs (entry + user token account)
-4. Persist `payout_amount` + `settled` on each paid entry
-5. Emit `WinnerPaidEvent` with rank for audit transparency
-6. Auto-transition to `Settled` when `total_payouts_set >= max_distributable`
-
-Ranks are not stored in account state; they are emitted in `WinnerPaidEvent` and remain off-chain source-of-truth data.
-
-Idempotency: re-submitting an already-settled entry in a batch is a no-op (skipped with `continue`) as long as the payout amount matches.
-
-## Cancellation Model
-
-`refund_batch` is authority-driven and claimless:
-- Admin submits entry/user-token pairs via `remaining_accounts`
-- Contract transfers full `amount_paid` refund to each user
-- Marks each refunded entry as `settled`
-- Already-settled entries are skipped (idempotent)
-- Total refunds bounded by `total_pool`
-
-## Invariants
-
-- `total_payouts_set <= max_distributable`
-- `max_distributable = (total_pool - fee_amount) + overlay_funded`
-- `total_refunds_paid <= total_pool` (cancellation path)
-- Arena moves to `Settled` when `total_payouts_set >= max_distributable`
-- Off-chain payout plan must always sum to exactly `max_distributable`
-- Fee collection happens exactly once per arena (`fee_collected` flag)
-- Each entry is settled at most once (`settled` flag as replay protection)
-- All `remaining_accounts` entry accounts must be writable (enforced on-chain)
-- Arena authority must match platform authority for cancel/settle/refund operations
-- `arena_vault` token account owner is always the arena PDA
-
-## Input Validation
-
-- `arena_id`: 1-64 bytes
-- `entry_fee`: > 0
-- `guaranteed_prize_pool`: > 0
-- `max_entries_per_user`: > 0
-- `end_time`: must be in the future and > `start_time`
-- `platform_fee_bps`: <= 10,000
-
-## Quick Start
+## Local commands
 
 ```bash
-pnpm install
+cargo build
 anchor build
 anchor test
 ```
 
-## Deployment
-
-### Fresh deploy (new cluster or first time)
-
-```bash
-# 1. Build program + IDL
-anchor build
-
-# 2. Deploy to target cluster
-anchor deploy --provider.cluster devnet
-
-# 3. Initialize platform (creates PlatformConfig + platform vault)
-cd ../tradestars-v3
-npx tsx scripts/initialize-platform.ts
-
-# 4. Copy updated IDL types to the web app
-cp ../tradestars-v3-solana/target/types/tradestars_arena.ts src/lib/solana/types/tradestars_arena.ts
-```
-
-### Upgrade deploy (PlatformConfig layout changed)
-
-When `PlatformConfig` fields change (e.g. adding `usdc_mint`), the old account
-can't be deserialized by the new program. You must close and re-initialize:
-
-```bash
-# 1. Build and deploy the new program
-anchor build
-anchor deploy --provider.cluster devnet
-
-# 2. Derive PDA addresses
-#    PlatformConfig: seeds = ["config"]
-#    PlatformVault:  seeds = ["platform_vault"]
-
-# 3. Close the old platform vault (SPL token account)
-spl-token close <PLATFORM_VAULT_PDA> --url devnet
-
-# 4. Close the old PlatformConfig account (reclaim rent to authority)
-solana close <PLATFORM_CONFIG_PDA> --url devnet
-
-# 5. Re-initialize the platform
-cd ../tradestars-v3
-npx tsx scripts/initialize-platform.ts
-
-# 6. Copy updated IDL types to the web app
-cp ../tradestars-v3-solana/target/types/tradestars_arena.ts src/lib/solana/types/tradestars_arena.ts
-```
-
-**Important:** Any existing arenas created under the old program will still
-reference the old `PlatformConfig` layout. If the platform is not yet live,
-this is fine — old arenas can be abandoned. If live, you need a migration
-strategy before upgrading.
+Detailed architecture and Mermaid diagrams are in [docs/vault-architecture.md](docs/vault-architecture.md).

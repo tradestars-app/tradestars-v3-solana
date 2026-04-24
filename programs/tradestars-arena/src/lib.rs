@@ -3,6 +3,7 @@
 use anchor_lang::prelude::*;
 
 pub mod errors;
+pub mod events;
 pub mod instructions;
 pub mod state;
 pub mod utils;
@@ -17,124 +18,147 @@ pub mod tradestars_arena {
 
     pub fn initialize_platform(
         ctx: Context<InitializePlatform>,
-        fee_recipient: Pubkey,
-        platform_fee_bps: u16,
+        arena_operator: Pubkey,
+        treasury_wallet: Pubkey,
+        base_attester_eth_address: [u8; 20],
+        base_chain_id: u64,
+        base_contract_address: [u8; 20],
+        dispute_window_seconds: u64,
+        settlement_grace_period_seconds: u64,
     ) -> Result<()> {
-        instructions::initialize_platform::handler(ctx, fee_recipient, platform_fee_bps)
+        instructions::initialize_platform::handler(
+            ctx,
+            arena_operator,
+            treasury_wallet,
+            base_attester_eth_address,
+            base_chain_id,
+            base_contract_address,
+            dispute_window_seconds,
+            settlement_grace_period_seconds,
+        )
+    }
+
+    pub fn update_platform_config(
+        ctx: Context<UpdatePlatformConfig>,
+        new_authority: Option<Pubkey>,
+        new_arena_operator: Option<Pubkey>,
+        new_treasury_wallet: Option<Pubkey>,
+        new_base_attester_eth_address: Option<[u8; 20]>,
+        new_base_chain_id: Option<u64>,
+        new_base_contract_address: Option<[u8; 20]>,
+        new_dispute_window_seconds: Option<u64>,
+        new_settlement_grace_period_seconds: Option<u64>,
+    ) -> Result<()> {
+        instructions::update_platform_config::handler(
+            ctx,
+            new_authority,
+            new_arena_operator,
+            new_treasury_wallet,
+            new_base_attester_eth_address,
+            new_base_chain_id,
+            new_base_contract_address,
+            new_dispute_window_seconds,
+            new_settlement_grace_period_seconds,
+        )
+    }
+
+    pub fn deposit_collateral(
+        ctx: Context<DepositCollateral>,
+        amount: u64,
+        base_tx_hash: [u8; 32],
+        log_index: u32,
+        signature: [u8; 64],
+        recovery_id: u8,
+    ) -> Result<()> {
+        instructions::deposit_collateral::handler(
+            ctx,
+            amount,
+            base_tx_hash,
+            log_index,
+            signature,
+            recovery_id,
+        )
     }
 
     pub fn create_arena(
         ctx: Context<CreateArena>,
-        arena_id: String,
-        params: CreateArenaParams,
+        arena_id: [u8; 32],
+        params: state::CreateArenaParams,
     ) -> Result<()> {
         instructions::create_arena::handler(ctx, arena_id, params)
     }
 
-    pub fn enter_arena(ctx: Context<EnterArena>, entry_number: u8) -> Result<()> {
-        instructions::enter_arena::handler(ctx, entry_number)
+    pub fn join_arena(ctx: Context<JoinArena>) -> Result<()> {
+        instructions::join_arena::handler(ctx)
     }
 
-    pub fn settle_and_pay_batch<'info>(
-        ctx: Context<'_, '_, 'info, 'info, SettleAndPayBatch<'info>>,
-        ranks: Vec<u16>,
-        payout_amounts: Vec<u64>,
+    pub fn post_settlement_root(
+        ctx: Context<PostSettlementRoot>,
+        merkle_root: [u8; 32],
     ) -> Result<()> {
-        instructions::settle_and_pay_batch::handler(ctx, ranks, payout_amounts)
+        instructions::post_settlement_root::handler(ctx, merkle_root)
     }
 
-    pub fn cancel_arena(ctx: Context<CancelArena>, reason: String) -> Result<()> {
-        instructions::cancel_arena::handler(ctx, reason)
+    pub fn submit_dispute(ctx: Context<SubmitDispute>) -> Result<()> {
+        instructions::submit_dispute::handler(ctx)
     }
 
-    pub fn refund_batch<'info>(
-        ctx: Context<'_, '_, 'info, 'info, RefundBatch<'info>>,
+    pub fn cancel_stale_arena(ctx: Context<CancelStaleArena>) -> Result<()> {
+        instructions::cancel_stale_arena::handler(ctx)
+    }
+
+    pub fn cancel_disputed_arena(ctx: Context<CancelDisputedArena>) -> Result<()> {
+        instructions::cancel_disputed_arena::handler(ctx)
+    }
+
+    pub fn set_deposits_paused(ctx: Context<SetDepositsPaused>, paused: bool) -> Result<()> {
+        instructions::set_deposits_paused::handler(ctx, paused)
+    }
+
+    pub fn settle_arena_batch<'info>(
+        ctx: Context<'_, '_, 'info, 'info, SettleArenaBatch<'info>>,
+        entries: Vec<state::SettlementEntry>,
     ) -> Result<()> {
-        instructions::refund_batch::handler(ctx)
+        instructions::settle_arena_batch::handler(ctx, entries)
     }
 
-    pub fn withdraw_fees(ctx: Context<WithdrawFees>, amount: Option<u64>) -> Result<()> {
-        instructions::withdraw_fees::handler(ctx, amount)
+    pub fn claim_winnings(
+        ctx: Context<ClaimWinnings>,
+        locked_amount: u64,
+        payout_amount: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::claim_winnings::handler(
+            ctx,
+            locked_amount,
+            payout_amount,
+            proof,
+        )
     }
 
-    pub fn toggle_pause(ctx: Context<TogglePause>) -> Result<()> {
-        instructions::toggle_pause::handler(ctx)
+    pub fn cancel_arena(ctx: Context<CancelArena>) -> Result<()> {
+        instructions::cancel_arena::handler(ctx)
     }
-}
 
-#[event]
-pub struct ArenaCreatedEvent {
-    pub arena: Pubkey,
-    pub arena_id: String,
-    pub entry_fee: u64,
-    pub guaranteed_prize_pool: u64,
-    pub start_time: i64,
-    pub end_time: i64,
-    pub creator: Pubkey,
-    pub timestamp: i64,
-}
+    pub fn refund_arena_batch<'info>(
+        ctx: Context<'_, '_, 'info, 'info, RefundArenaBatch<'info>>,
+    ) -> Result<()> {
+        instructions::refund_arena_batch::handler(ctx)
+    }
 
-#[event]
-pub struct EntryEvent {
-    pub arena: Pubkey,
-    pub entry: Pubkey,
-    pub user: Pubkey,
-    pub entry_number: u8,
-    pub amount_paid: u64,
-    pub timestamp: i64,
-}
+    pub fn claim_refund(ctx: Context<ClaimRefund>) -> Result<()> {
+        instructions::claim_refund::handler(ctx)
+    }
 
-#[event]
-pub struct ArenaFinalizedEvent {
-    pub arena: Pubkey,
-    pub total_entries: u32,
-    pub total_pool: u64,
-    pub fee_amount: u64,
-    pub collected_net: u64,
-    pub timestamp: i64,
-}
+    pub fn finalize_arena(ctx: Context<FinalizeArena>) -> Result<()> {
+        instructions::finalize_arena::handler(ctx)
+    }
 
-#[event]
-pub struct OverlayFundedEvent {
-    pub arena: Pubkey,
-    pub delta_amount: u64,
-    pub target_overlay_total: u64,
-    pub new_overlay_funded_total: u64,
-    pub timestamp: i64,
-}
-
-#[event]
-pub struct WinnerPaidEvent {
-    pub arena: Pubkey,
-    pub entry: Pubkey,
-    pub user: Pubkey,
-    pub rank: u16,
-    pub payout_amount: u64,
-    pub total_payouts_set: u64,
-    pub timestamp: i64,
-}
-
-#[event]
-pub struct ArenaSettledEvent {
-    pub arena: Pubkey,
-    pub total_payouts_set: u64,
-    pub overlay_funded: u64,
-    pub timestamp: i64,
-}
-
-#[event]
-pub struct ArenaCancelledEvent {
-    pub arena: Pubkey,
-    pub reason: String,
-    pub timestamp: i64,
-}
-
-#[event]
-pub struct RefundClaimedEvent {
-    pub arena: Pubkey,
-    pub entry: Pubkey,
-    pub user: Pubkey,
-    pub amount: u64,
-    pub total_refunds_paid: u64,
-    pub timestamp: i64,
+    pub fn withdraw_request(
+        ctx: Context<WithdrawRequest>,
+        amount: u64,
+        nonce: u64,
+    ) -> Result<()> {
+        instructions::withdraw_request::handler(ctx, amount, nonce)
+    }
 }

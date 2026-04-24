@@ -3,10 +3,10 @@ use anchor_lang::prelude::*;
 use crate::errors::TradestarsArenaError;
 use crate::events::ArenaCancelled;
 use crate::state::{ArenaAccount, ArenaStatus, PlatformConfig};
-use crate::utils::{require_arena_operator, ARENA_SEED, CONFIG_SEED};
+use crate::utils::{ARENA_SEED, CONFIG_SEED};
 
 #[derive(Accounts)]
-pub struct CancelArena<'info> {
+pub struct CancelStaleArena<'info> {
     #[account(seeds = [CONFIG_SEED], bump = platform_config.bump)]
     pub platform_config: Account<'info, PlatformConfig>,
 
@@ -17,25 +17,30 @@ pub struct CancelArena<'info> {
     )]
     pub arena: Account<'info, ArenaAccount>,
 
-    pub authority: Signer<'info>,
+    pub caller: Signer<'info>,
 }
 
-pub fn handler(ctx: Context<CancelArena>) -> Result<()> {
-    require_arena_operator(&ctx.accounts.platform_config, &ctx.accounts.authority.key())?;
+pub fn handler(ctx: Context<CancelStaleArena>) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
     let arena = &mut ctx.accounts.arena;
     require!(arena.status == ArenaStatus::Created, TradestarsArenaError::ArenaNotCreated);
-    require!(
-        Clock::get()?.unix_timestamp < arena.start_time,
-        TradestarsArenaError::InvalidTime
-    );
+
+    let stale_cutoff = arena
+        .end_time
+        .checked_add(
+            i64::try_from(ctx.accounts.platform_config.settlement_grace_period_seconds)
+                .map_err(|_| TradestarsArenaError::InvalidCooldown)?,
+        )
+        .ok_or(TradestarsArenaError::MathOverflow)?;
+    require!(now >= stale_cutoff, TradestarsArenaError::ArenaNotStale);
 
     arena.status = ArenaStatus::Cancelled;
 
     emit!(ArenaCancelled {
         arena: arena.key(),
         creator: arena.creator,
-        cancelled_by: ctx.accounts.authority.key(),
-        timestamp: Clock::get()?.unix_timestamp,
+        cancelled_by: ctx.accounts.caller.key(),
+        timestamp: now,
     });
 
     Ok(())

@@ -2831,6 +2831,9 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
+ "solana-keccak-hasher",
+ "solana-secp256k1-recover",
+ "spl-token-2022",
 ]
 
 [[package]]

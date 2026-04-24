@@ -2,54 +2,80 @@ use anchor_lang::prelude::*;
 
 #[error_code]
 pub enum TradestarsArenaError {
-    #[msg("Platform is paused")]
-    PlatformPaused,
     #[msg("Unauthorized action")]
     Unauthorized,
-    #[msg("Arena is not open")]
-    ArenaNotOpen,
-    #[msg("Arena is already settled")]
-    ArenaAlreadySettled,
-    #[msg("Arena has been cancelled")]
-    ArenaCancelled,
-    #[msg("Arena is not cancelled")]
-    ArenaNotCancelled,
-    #[msg("Arena has not ended yet")]
-    ArenaNotEnded,
-    #[msg("Invalid time parameters")]
-    InvalidTime,
+    #[msg("Only the configured arena operator may call this instruction")]
+    InvalidArenaOperator,
+    #[msg("Invalid deposit attestation")]
+    InvalidDepositAttestation,
+    #[msg("Invalid base source configuration")]
+    InvalidBaseSource,
     #[msg("Invalid status transition")]
     InvalidStatusTransition,
-    #[msg("Entry number exceeds max entries per user")]
-    EntryLimitReached,
-    #[msg("Invalid entry number")]
-    InvalidEntryNumber,
-    #[msg("Entry does not belong to user")]
-    EntryNotOwned,
-    #[msg("Payout total exceeds distributable amount")]
-    PayoutExceedsPool,
-    #[msg("Entry has already been settled")]
-    EntryAlreadySettled,
-    #[msg("No payout available")]
-    NoPayout,
-    #[msg("Insufficient funds in vault")]
-    InsufficientFunds,
     #[msg("Amount too small")]
     AmountTooSmall,
     #[msg("Calculation overflow")]
     MathOverflow,
-    #[msg("Entry window is closed")]
-    EntryWindowClosed,
-    #[msg("Invalid platform fee bps")]
+    #[msg("Invalid arena fee bps")]
     InvalidFeeBps,
-    #[msg("Batch arrays have mismatched lengths")]
-    BatchLengthMismatch,
-    #[msg("Invalid remaining accounts passed for batch settlement")]
-    InvalidRemainingAccounts,
-    #[msg("Invalid winner token account")]
-    InvalidWinnerTokenAccount,
+    #[msg("Invalid cooldown configuration")]
+    InvalidCooldown,
+    #[msg("Invalid time configuration")]
+    InvalidTime,
+    #[msg("Invalid account supplied")]
+    InvalidAccount,
+    #[msg("User account owner mismatch")]
+    InvalidUserAccount,
+    #[msg("Arena creator signer mismatch")]
+    InvalidCreator,
+    #[msg("Invalid treasury wallet")]
+    InvalidTreasuryWallet,
+    #[msg("Invalid role key")]
+    InvalidRoleKey,
+    #[msg("Arena position does not match expected PDA")]
+    InvalidArenaPosition,
+    #[msg("Arena position has already been resolved")]
+    PositionAlreadyResolved,
+    #[msg("Arena has not been settled")]
+    ArenaNotSettled,
+    #[msg("Arena is not disputed")]
+    ArenaNotDisputed,
+    #[msg("Arena is not cancelled")]
+    ArenaNotCancelled,
+    #[msg("Claim cooldown has not elapsed")]
+    ClaimCooldownActive,
+    #[msg("Arena claim amount does not match locked amount")]
+    LockedAmountMismatch,
+    #[msg("Settlement batch accounts are invalid")]
+    InvalidBatchAccounts,
+    #[msg("Invalid merkle proof")]
+    InvalidMerkleProof,
+    #[msg("Insufficient unlocked balance")]
+    InsufficientAvailableBalance,
+    #[msg("Insufficient guaranteed prize reserves")]
+    InsufficientGuaranteedPrize,
+    #[msg("User has reached the maximum number of entries")]
+    MaxEntriesReached,
+    #[msg("Arena claim payout exceeds the remaining arena pool")]
+    ArenaPoolExceeded,
+    #[msg("Claims have already started for this settlement version")]
+    ClaimsAlreadyStarted,
+    #[msg("Invalid nonce")]
+    InvalidNonce,
+    #[msg("Expected the Token-2022 program")]
+    InvalidTokenProgram,
     #[msg("Invalid token account")]
     InvalidTokenAccount,
-    #[msg("Invalid arena ID length")]
-    InvalidArenaId,
+    #[msg("User is not an active participant in the arena")]
+    NotArenaParticipant,
+    #[msg("Arena is not in the created state")]
+    ArenaNotCreated,
+    #[msg("Arena has unresolved positions")]
+    ArenaNotReadyToFinalize,
+    #[msg("Arena has already been disputed for this settlement round")]
+    AlreadyDisputed,
+    #[msg("Deposits are currently paused")]
+    DepositsPaused,
+    #[msg("Arena is not stale enough for cancellation")]
+    ArenaNotStale,
 }

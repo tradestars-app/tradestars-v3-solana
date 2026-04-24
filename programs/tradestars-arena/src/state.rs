@@ -1,113 +1,133 @@
 use anchor_lang::prelude::*;
 
-use crate::errors::TradestarsArenaError;
+pub const MAX_ENTRIES_PER_USER: u8 = 10;
+pub const DISPUTE_THRESHOLD_BPS: u16 = 500;
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ArenaStatus {
-    Open,
+    Created,
+    SettledPendingClaim,
+    Disputed,
     Finalized,
-    Settled,
     Cancelled,
-}
-
-#[account]
-pub struct Arena {
-    pub arena_id: String,
-    pub entry_fee: u64,
-    pub guaranteed_prize_pool: u64,
-    pub start_time: i64,
-    pub end_time: i64,
-    pub total_entries: u32,
-    pub total_pool: u64,
-    pub fee_amount: u64,
-    pub fee_collected: bool,
-    pub overlay_funded: u64,
-    pub total_payouts_set: u64,
-    pub total_refunds_paid: u64,
-    pub status: ArenaStatus,
-    pub max_entries_per_user: u8,
-    pub authority: Pubkey,
-    pub creator: Pubkey,
-    pub bump: u8,
-}
-
-impl Arena {
-    pub const MAX_ARENA_ID_LEN: usize = 64;
-
-    pub const LEN: usize = 8 + // discriminator
-        4 + Self::MAX_ARENA_ID_LEN + // arena_id
-        8 + // entry_fee
-        8 + // guaranteed_prize_pool
-        8 + // start_time
-        8 + // end_time
-        4 + // total_entries
-        8 + // total_pool
-        8 + // fee_amount
-        1 + // fee_collected
-        8 + // overlay_funded
-        8 + // total_payouts_set
-        8 + // total_refunds_paid
-        1 + // status
-        1 + // max_entries_per_user
-        32 + // authority
-        32 + // creator
-        1; // bump
-
-    pub fn collected_net(&self) -> Result<u64> {
-        self.total_pool
-            .checked_sub(self.fee_amount)
-            .ok_or(TradestarsArenaError::MathOverflow.into())
-    }
-
-    pub fn required_overlay(&self) -> Result<u64> {
-        let collected_net = self.collected_net()?;
-        Ok(self.guaranteed_prize_pool.saturating_sub(collected_net))
-    }
-
-    pub fn max_distributable(&self) -> Result<u64> {
-        let collected_net = self.collected_net()?;
-        collected_net
-            .checked_add(self.overlay_funded)
-            .ok_or(TradestarsArenaError::MathOverflow.into())
-    }
-}
-
-#[account]
-pub struct ArenaEntry {
-    pub user: Pubkey,
-    pub arena: Pubkey,
-    pub entry_number: u8,
-    pub amount_paid: u64,
-    pub payout_amount: u64,
-    pub settled: bool,
-    pub bump: u8,
-}
-
-impl ArenaEntry {
-    pub const LEN: usize = 8 + // discriminator
-        32 + // user
-        32 + // arena
-        1 + // entry_number
-        8 + // amount_paid
-        8 + // payout_amount
-        1 + // settled
-        1; // bump
 }
 
 #[account]
 pub struct PlatformConfig {
     pub authority: Pubkey,
-    pub fee_recipient: Pubkey,
-    pub platform_fee_bps: u16,
-    pub paused: bool,
+    pub arena_operator: Pubkey,
+    pub treasury_wallet: Pubkey,
+    pub base_attester_eth_address: [u8; 20],
+    pub base_chain_id: u64,
+    pub base_contract_address: [u8; 20],
+    pub dispute_window_seconds: u64,
+    pub settlement_grace_period_seconds: u64,
+    pub deposits_paused: bool,
     pub bump: u8,
 }
 
 impl PlatformConfig {
-    pub const LEN: usize = 8 + // discriminator
-        32 + // authority
-        32 + // fee_recipient
-        2 + // platform_fee_bps
-        1 + // paused
-        1; // bump
+    pub const LEN: usize = 8 + (32 * 3) + 20 + 8 + 20 + 8 + 8 + 1 + 1;
+}
+
+#[account]
+pub struct UserAccount {
+    pub owner: Pubkey,
+    pub total_balance: u64,
+    pub in_play_debt: u64,
+    pub last_nonce: u64,
+    pub bump: u8,
+}
+
+impl UserAccount {
+    pub const LEN: usize = 8 + 32 + 8 + 8 + 8 + 1;
+
+    pub fn available_to_withdraw(&self) -> Result<u64> {
+        self.total_balance
+            .checked_sub(self.in_play_debt)
+            .ok_or(crate::errors::TradestarsArenaError::MathOverflow.into())
+    }
+}
+
+#[account]
+pub struct ArenaAccount {
+    pub arena_id: [u8; 32],
+    pub creator: Pubkey,
+    pub status: ArenaStatus,
+    pub entry_fee: u64,
+    pub fee_bps: u16,
+    pub guaranteed_prize_target: u64,
+    pub guaranteed_prize_reserved: u64,
+    pub total_entry_fees_locked: u64,
+    pub fee_accrued: u64,
+    pub total_pool: u64,
+    pub total_claimed_payout: u64,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub merkle_root: [u8; 32],
+    pub settlement_timestamp: i64,
+    pub claimable_at: i64,
+    pub participant_count: u32,
+    pub resolved_count: u32,
+    pub dispute_count: u32,
+    pub settlement_version: u32,
+    pub metadata_hash: [u8; 32],
+    pub bump: u8,
+}
+
+impl ArenaAccount {
+    pub const LEN: usize = 8
+        + 32
+        + 32
+        + 1
+        + 8
+        + 2
+        + (8 * 6)
+        + (8 * 4)
+        + 32
+        + (4 * 4)
+        + 32
+        + 1;
+}
+
+#[account]
+pub struct ArenaPosition {
+    pub user: Pubkey,
+    pub arena: Pubkey,
+    pub entry_count: u8,
+    pub locked_amount: u64,
+    pub resolved: bool,
+    pub last_disputed_settlement_version: u32,
+    pub bump: u8,
+}
+
+impl ArenaPosition {
+    pub const LEN: usize = 8 + 32 + 32 + 1 + 8 + 1 + 4 + 1;
+}
+
+#[account]
+pub struct Marker {
+    pub bump: u8,
+}
+
+impl Marker {
+    pub const LEN: usize = 8 + 1;
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct CreateArenaParams {
+    pub creator: Pubkey,
+    pub entry_fee: u64,
+    pub fee_bps: u16,
+    pub guaranteed_prize_target: u64,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub metadata_hash: [u8; 32],
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct SettlementEntry {
+    pub locked_amount: u64,
+    pub payout_amount: u64,
+    pub proof: Vec<[u8; 32]>,
 }

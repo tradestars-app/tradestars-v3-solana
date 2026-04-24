@@ -1,120 +1,150 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Mint, Token, TokenAccount};
+use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token_2022::{burn_checked, BurnChecked};
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::errors::TradestarsArenaError;
-use crate::state::{Arena, ArenaStatus, PlatformConfig};
-use crate::ArenaCreatedEvent;
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct CreateArenaParams {
-    pub entry_fee: u64,
-    pub guaranteed_prize_pool: u64,
-    pub start_time: i64,
-    pub end_time: i64,
-    pub max_entries_per_user: u8,
-}
+use crate::events::ArenaCreated;
+use crate::state::{ArenaAccount, ArenaStatus, CreateArenaParams, PlatformConfig, UserAccount};
+use crate::utils::{
+    require_arena_operator, ARENA_SEED, CONFIG_SEED, TUSDC_DECIMALS, TUSDC_MINT_SEED, USER_SEED,
+};
 
 #[derive(Accounts)]
-#[instruction(arena_id: String)]
+#[instruction(arena_id: [u8; 32])]
 pub struct CreateArena<'info> {
-    #[account(mut)]
-    pub authority: Signer<'info>,
-
-    #[account(
-        seeds = [b"config"],
-        bump = platform_config.bump,
-        has_one = authority
-    )]
+    #[account(seeds = [CONFIG_SEED], bump = platform_config.bump)]
     pub platform_config: Account<'info, PlatformConfig>,
 
     #[account(
         init,
         payer = authority,
-        space = Arena::LEN,
-        seeds = [b"arena", arena_id.as_bytes()],
+        space = ArenaAccount::LEN,
+        seeds = [ARENA_SEED, arena_id.as_ref()],
         bump
     )]
-    pub arena: Account<'info, Arena>,
+    pub arena: Account<'info, ArenaAccount>,
 
-    pub usdc_mint: Account<'info, Mint>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(mut)]
+    pub creator: Signer<'info>,
 
     #[account(
-        init,
+        init_if_needed,
         payer = authority,
-        seeds = [b"vault", arena.key().as_ref()],
-        bump,
-        token::mint = usdc_mint,
-        token::authority = arena
+        space = UserAccount::LEN,
+        seeds = [USER_SEED, creator.key().as_ref()],
+        bump
     )]
-    pub arena_vault: Account<'info, TokenAccount>,
+    pub creator_user_account: Account<'info, UserAccount>,
 
-    pub token_program: Program<'info, Token>,
+    #[account(mut, seeds = [TUSDC_MINT_SEED], bump)]
+    pub tusdc_mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        init_if_needed,
+        payer = authority,
+        associated_token::mint = tusdc_mint,
+        associated_token::authority = creator,
+        associated_token::token_program = token_program
+    )]
+    pub creator_tusdc: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
-    pub rent: Sysvar<'info, Rent>,
 }
 
 pub fn handler(
     ctx: Context<CreateArena>,
-    arena_id: String,
+    arena_id: [u8; 32],
     params: CreateArenaParams,
 ) -> Result<()> {
-    require!(
-        !arena_id.is_empty() && arena_id.len() <= Arena::MAX_ARENA_ID_LEN,
-        TradestarsArenaError::InvalidArenaId
-    );
-
-    let platform_config = &ctx.accounts.platform_config;
-    require!(
-        !platform_config.paused,
-        TradestarsArenaError::PlatformPaused
-    );
+    require_arena_operator(&ctx.accounts.platform_config, &ctx.accounts.authority.key())?;
+    require!(params.creator == ctx.accounts.creator.key(), TradestarsArenaError::InvalidCreator);
     require!(params.entry_fee > 0, TradestarsArenaError::AmountTooSmall);
-    require!(
-        params.guaranteed_prize_pool > 0,
-        TradestarsArenaError::AmountTooSmall
-    );
-    require!(
-        params.max_entries_per_user > 0,
-        TradestarsArenaError::InvalidEntryNumber
-    );
-    require!(
-        params.start_time < params.end_time,
-        TradestarsArenaError::InvalidTime
-    );
+    require!(params.fee_bps <= 10_000, TradestarsArenaError::InvalidFeeBps);
+
     let now = Clock::get()?.unix_timestamp;
+    require!(params.start_time > now, TradestarsArenaError::InvalidTime);
+    require!(params.end_time > params.start_time, TradestarsArenaError::InvalidTime);
+
+    let creator_user_account = &mut ctx.accounts.creator_user_account;
+    if creator_user_account.owner == Pubkey::default() {
+        creator_user_account.owner = ctx.accounts.creator.key();
+        creator_user_account.total_balance = 0;
+        creator_user_account.in_play_debt = 0;
+        creator_user_account.last_nonce = 0;
+        creator_user_account.bump = ctx.bumps.creator_user_account;
+    }
     require!(
-        params.end_time > now,
-        TradestarsArenaError::InvalidTime
+        creator_user_account.owner == ctx.accounts.creator.key(),
+        TradestarsArenaError::InvalidUserAccount
     );
 
-    let arena = &mut ctx.accounts.arena;
-    arena.arena_id = arena_id.clone();
-    arena.entry_fee = params.entry_fee;
-    arena.guaranteed_prize_pool = params.guaranteed_prize_pool;
-    arena.start_time = params.start_time;
-    arena.end_time = params.end_time;
-    arena.total_entries = 0;
-    arena.total_pool = 0;
-    arena.fee_amount = 0;
-    arena.fee_collected = false;
-    arena.overlay_funded = 0;
-    arena.total_payouts_set = 0;
-    arena.total_refunds_paid = 0;
-    arena.status = ArenaStatus::Open;
-    arena.max_entries_per_user = params.max_entries_per_user;
-    arena.authority = ctx.accounts.authority.key();
-    arena.creator = ctx.accounts.authority.key();
-    arena.bump = ctx.bumps.arena;
+    if params.guaranteed_prize_target > 0 {
+        require!(
+            creator_user_account.available_to_withdraw()? >= params.guaranteed_prize_target,
+            TradestarsArenaError::InsufficientAvailableBalance
+        );
 
-    emit!(ArenaCreatedEvent {
-        arena: arena.key(),
+        burn_checked(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                BurnChecked {
+                    mint: ctx.accounts.tusdc_mint.to_account_info(),
+                    from: ctx.accounts.creator_tusdc.to_account_info(),
+                    authority: ctx.accounts.creator.to_account_info(),
+                },
+            ),
+            params.guaranteed_prize_target,
+            TUSDC_DECIMALS,
+        )?;
+
+        creator_user_account.in_play_debt = creator_user_account
+            .in_play_debt
+            .checked_add(params.guaranteed_prize_target)
+            .ok_or(TradestarsArenaError::MathOverflow)?;
+    }
+
+    ctx.accounts.arena.set_inner(ArenaAccount {
         arena_id,
-        entry_fee: arena.entry_fee,
-        guaranteed_prize_pool: arena.guaranteed_prize_pool,
-        start_time: arena.start_time,
-        end_time: arena.end_time,
-        creator: arena.creator,
-        timestamp: Clock::get()?.unix_timestamp,
+        creator: params.creator,
+        status: ArenaStatus::Created,
+        entry_fee: params.entry_fee,
+        fee_bps: params.fee_bps,
+        guaranteed_prize_target: params.guaranteed_prize_target,
+        guaranteed_prize_reserved: params.guaranteed_prize_target,
+        total_entry_fees_locked: 0,
+        fee_accrued: 0,
+        total_pool: params.guaranteed_prize_target,
+        total_claimed_payout: 0,
+        start_time: params.start_time,
+        end_time: params.end_time,
+        merkle_root: [0; 32],
+        settlement_timestamp: 0,
+        claimable_at: 0,
+        participant_count: 0,
+        resolved_count: 0,
+        dispute_count: 0,
+        settlement_version: 0,
+        metadata_hash: params.metadata_hash,
+        bump: ctx.bumps.arena,
+    });
+
+    emit!(ArenaCreated {
+        arena: ctx.accounts.arena.key(),
+        creator: params.creator,
+        entry_fee: params.entry_fee,
+        fee_bps: params.fee_bps,
+        guaranteed_prize_target: params.guaranteed_prize_target,
+        guaranteed_prize_reserved: params.guaranteed_prize_target,
+        start_time: params.start_time,
+        end_time: params.end_time,
+        metadata_hash: params.metadata_hash,
+        timestamp: now,
     });
 
     Ok(())

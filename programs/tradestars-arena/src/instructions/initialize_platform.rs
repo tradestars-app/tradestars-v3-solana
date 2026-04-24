@@ -1,8 +1,15 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Mint, Token, TokenAccount};
+use anchor_spl::token_2022::{self, initialize_mint2, InitializeMint2};
+use anchor_spl::token_2022_extensions::{
+    non_transferable_mint_initialize, NonTransferableMintInitialize,
+};
+use anchor_spl::token_interface::TokenInterface;
 
 use crate::errors::TradestarsArenaError;
 use crate::state::PlatformConfig;
+use crate::utils::{
+    create_pda_account, tusdc_mint_space, CONFIG_SEED, TUSDC_DECIMALS, TUSDC_MINT_SEED,
+};
 
 #[derive(Accounts)]
 pub struct InitializePlatform<'info> {
@@ -10,46 +17,104 @@ pub struct InitializePlatform<'info> {
         init,
         payer = authority,
         space = PlatformConfig::LEN,
-        seeds = [b"config"],
+        seeds = [CONFIG_SEED],
         bump
     )]
     pub platform_config: Account<'info, PlatformConfig>,
 
-    #[account(
-        init,
-        payer = authority,
-        seeds = [b"platform_vault"],
-        bump,
-        token::mint = usdc_mint,
-        token::authority = platform_config,
-    )]
-    pub platform_vault: Account<'info, TokenAccount>,
-
-    pub usdc_mint: Account<'info, Mint>,
+    #[account(mut, seeds = [TUSDC_MINT_SEED], bump)]
+    /// CHECK: initialized as a Token-2022 mint in the handler.
+    pub tusdc_mint: UncheckedAccount<'info>,
 
     #[account(mut)]
     pub authority: Signer<'info>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
 pub fn handler(
     ctx: Context<InitializePlatform>,
-    fee_recipient: Pubkey,
-    platform_fee_bps: u16,
+    arena_operator: Pubkey,
+    treasury_wallet: Pubkey,
+    base_attester_eth_address: [u8; 20],
+    base_chain_id: u64,
+    base_contract_address: [u8; 20],
+    dispute_window_seconds: u64,
+    settlement_grace_period_seconds: u64,
 ) -> Result<()> {
     require!(
-        platform_fee_bps <= 10_000,
-        TradestarsArenaError::InvalidFeeBps
+        ctx.accounts.token_program.key() == token_2022::ID,
+        TradestarsArenaError::InvalidTokenProgram
+    );
+    require!(
+        arena_operator != Pubkey::default(),
+        TradestarsArenaError::InvalidRoleKey
+    );
+    require!(dispute_window_seconds > 0, TradestarsArenaError::InvalidCooldown);
+    require!(
+        settlement_grace_period_seconds > 0,
+        TradestarsArenaError::InvalidCooldown
+    );
+    require!(
+        treasury_wallet != Pubkey::default(),
+        TradestarsArenaError::InvalidTreasuryWallet
+    );
+    require!(
+        base_attester_eth_address != [0_u8; 20],
+        TradestarsArenaError::InvalidBaseSource
+    );
+    require!(base_chain_id > 0, TradestarsArenaError::InvalidBaseSource);
+    require!(
+        base_contract_address != [0_u8; 20],
+        TradestarsArenaError::InvalidBaseSource
     );
 
-    let platform_config = &mut ctx.accounts.platform_config;
-    platform_config.authority = ctx.accounts.authority.key();
-    platform_config.fee_recipient = fee_recipient;
-    platform_config.platform_fee_bps = platform_fee_bps;
-    platform_config.paused = false;
-    platform_config.bump = ctx.bumps.platform_config;
+    let mint_space = tusdc_mint_space()?;
+    let mint_bump = ctx.bumps.tusdc_mint;
+    let mint_signer_seeds: &[&[u8]] = &[TUSDC_MINT_SEED, &[mint_bump]];
+
+    create_pda_account(
+        &ctx.accounts.authority.to_account_info(),
+        &ctx.accounts.tusdc_mint.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        &ctx.accounts.token_program.key(),
+        mint_space,
+        mint_signer_seeds,
+    )?;
+
+    non_transferable_mint_initialize(CpiContext::new(
+        ctx.accounts.token_program.to_account_info(),
+        NonTransferableMintInitialize {
+            token_program_id: ctx.accounts.token_program.to_account_info(),
+            mint: ctx.accounts.tusdc_mint.to_account_info(),
+        },
+    ))?;
+
+    initialize_mint2(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            InitializeMint2 {
+                mint: ctx.accounts.tusdc_mint.to_account_info(),
+            },
+        ),
+        TUSDC_DECIMALS,
+        &ctx.accounts.platform_config.key(),
+        None,
+    )?;
+
+    ctx.accounts.platform_config.set_inner(PlatformConfig {
+        authority: ctx.accounts.authority.key(),
+        arena_operator,
+        treasury_wallet,
+        base_attester_eth_address,
+        base_chain_id,
+        base_contract_address,
+        dispute_window_seconds,
+        settlement_grace_period_seconds,
+        deposits_paused: false,
+        bump: ctx.bumps.platform_config,
+    });
 
     Ok(())
 }
