@@ -20,9 +20,7 @@ pub mod tradestars_arena {
         ctx: Context<InitializePlatform>,
         arena_operator: Pubkey,
         treasury_wallet: Pubkey,
-        base_attester_eth_address: [u8; 20],
-        base_chain_id: u64,
-        base_contract_address: [u8; 20],
+        minting_authority: Pubkey,
         dispute_window_seconds: u64,
         settlement_grace_period_seconds: u64,
     ) -> Result<()> {
@@ -30,9 +28,7 @@ pub mod tradestars_arena {
             ctx,
             arena_operator,
             treasury_wallet,
-            base_attester_eth_address,
-            base_chain_id,
-            base_contract_address,
+            minting_authority,
             dispute_window_seconds,
             settlement_grace_period_seconds,
         )
@@ -43,9 +39,7 @@ pub mod tradestars_arena {
         new_authority: Option<Pubkey>,
         new_arena_operator: Option<Pubkey>,
         new_treasury_wallet: Option<Pubkey>,
-        new_base_attester_eth_address: Option<[u8; 20]>,
-        new_base_chain_id: Option<u64>,
-        new_base_contract_address: Option<[u8; 20]>,
+        new_minting_authority: Option<Pubkey>,
         new_dispute_window_seconds: Option<u64>,
         new_settlement_grace_period_seconds: Option<u64>,
     ) -> Result<()> {
@@ -54,9 +48,7 @@ pub mod tradestars_arena {
             new_authority,
             new_arena_operator,
             new_treasury_wallet,
-            new_base_attester_eth_address,
-            new_base_chain_id,
-            new_base_contract_address,
+            new_minting_authority,
             new_dispute_window_seconds,
             new_settlement_grace_period_seconds,
         )
@@ -67,16 +59,12 @@ pub mod tradestars_arena {
         amount: u64,
         base_tx_hash: [u8; 32],
         log_index: u32,
-        signature: [u8; 64],
-        recovery_id: u8,
     ) -> Result<()> {
         instructions::deposit_collateral::handler(
             ctx,
             amount,
             base_tx_hash,
             log_index,
-            signature,
-            recovery_id,
         )
     }
 

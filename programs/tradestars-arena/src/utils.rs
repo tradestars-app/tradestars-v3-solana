@@ -1,7 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{program::invoke_signed, system_instruction, system_program};
 use solana_keccak_hasher::hashv;
-use solana_secp256k1_recover::secp256k1_recover;
 use spl_token_2022::extension::ExtensionType;
 
 use crate::errors::TradestarsArenaError;
@@ -16,7 +15,6 @@ pub const POSITION_SEED: &[u8] = b"position";
 pub const DEPOSIT_SEED: &[u8] = b"deposit";
 pub const TUSDC_MINT_SEED: &[u8] = b"tusdc_mint";
 pub const TUSDC_DECIMALS: u8 = 6;
-pub const DEPOSIT_ATTESTATION_DOMAIN: &[u8] = b"TRADESTARS_BASE_DEPOSIT_V1";
 
 pub fn require_authority(config: &PlatformConfig, signer: &Pubkey) -> Result<()> {
     require!(signer == &config.authority, TradestarsArenaError::Unauthorized);
@@ -27,6 +25,14 @@ pub fn require_arena_operator(config: &PlatformConfig, signer: &Pubkey) -> Resul
     require!(
         signer == &config.arena_operator,
         TradestarsArenaError::InvalidArenaOperator
+    );
+    Ok(())
+}
+
+pub fn require_minting_authority(config: &PlatformConfig, signer: &Pubkey) -> Result<()> {
+    require!(
+        signer == &config.minting_authority,
+        TradestarsArenaError::InvalidMintingAuthority
     );
     Ok(())
 }
@@ -98,65 +104,6 @@ pub fn merkle_leaf(
         &payout_amount.to_le_bytes(),
     ])
     .0
-}
-
-pub fn deposit_attestation_hash(
-    program_id: &Pubkey,
-    chain_id: u64,
-    contract_address: &[u8; 20],
-    user: &Pubkey,
-    amount: u64,
-    base_tx_hash: &[u8; 32],
-    log_index: u32,
-) -> [u8; 32] {
-    hashv(&[
-        DEPOSIT_ATTESTATION_DOMAIN,
-        program_id.as_ref(),
-        &chain_id.to_le_bytes(),
-        contract_address,
-        user.as_ref(),
-        &amount.to_le_bytes(),
-        base_tx_hash,
-        &log_index.to_le_bytes(),
-    ])
-    .0
-}
-
-pub fn ethereum_address_from_pubkey(pubkey: &[u8; 64]) -> [u8; 20] {
-    let hash = hashv(&[pubkey]).0;
-    let mut address = [0_u8; 20];
-    address.copy_from_slice(&hash[12..]);
-    address
-}
-
-pub fn verify_deposit_attestation(
-    config: &PlatformConfig,
-    program_id: &Pubkey,
-    user: &Pubkey,
-    amount: u64,
-    base_tx_hash: &[u8; 32],
-    log_index: u32,
-    signature: &[u8; 64],
-    recovery_id: u8,
-) -> Result<()> {
-    let digest = deposit_attestation_hash(
-        program_id,
-        config.base_chain_id,
-        &config.base_contract_address,
-        user,
-        amount,
-        base_tx_hash,
-        log_index,
-    );
-
-    let recovered = secp256k1_recover(&digest, recovery_id, signature)
-        .map_err(|_| TradestarsArenaError::InvalidDepositAttestation)?;
-    let recovered_address = ethereum_address_from_pubkey(&recovered.0);
-    require!(
-        recovered_address == config.base_attester_eth_address,
-        TradestarsArenaError::InvalidDepositAttestation
-    );
-    Ok(())
 }
 
 pub fn fee_amount(entry_fee: u64, fee_bps: u16) -> Result<u64> {

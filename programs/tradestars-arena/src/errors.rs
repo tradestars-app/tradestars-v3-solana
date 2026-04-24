@@ -6,10 +6,8 @@ pub enum TradestarsArenaError {
     Unauthorized,
     #[msg("Only the configured arena operator may call this instruction")]
     InvalidArenaOperator,
-    #[msg("Invalid deposit attestation")]
-    InvalidDepositAttestation,
-    #[msg("Invalid base source configuration")]
-    InvalidBaseSource,
+    #[msg("Only the configured minting authority may call this instruction")]
+    InvalidMintingAuthority,
     #[msg("Invalid status transition")]
     InvalidStatusTransition,
     #[msg("Amount too small")]

@@ -7,7 +7,7 @@ TradeStars uses Solana as the enforcement layer for mirrored balances, arena com
 This version is intentionally simple:
 
 - Base custody stays on Base.
-- Solana mints `tUSDC` 1:1 from Base deposit attestations signed by a trusted EVM attester.
+- Solana mints `tUSDC` 1:1 through a dedicated Solana `minting_authority`.
 - `tUSDC` is Token-2022 `NonTransferable`.
 - Arena commitments are represented by immediate burns plus on-chain debt accounting.
 - Guaranteed prizes are locked by the arena creator at creation time.
@@ -18,28 +18,22 @@ This version is intentionally simple:
 
 There is no per-arena token vault.
 
-## Base deposit attestation
+## Base deposit flow
 
-The Base contract does not sign anything itself. The attestation flow is:
+The Base contract and backend are still the source of truth for deposits, but Solana does not verify Base proofs on-chain in this version.
 
-1. A user deposits USDC into the configured Base deposit contract.
-2. The Base contract emits a deposit event.
-3. An off-chain attester watches that contract, waits for the event, and signs a canonical payload with an EVM private key.
-4. Anyone can submit that attestation to Solana through `deposit_collateral`.
-5. The Solana program recovers the secp256k1 signer, checks it matches `base_attester_eth_address`, checks the `(base_tx_hash, log_index)` replay marker, then mints `tUSDC`.
+The flow is:
 
-Signed payload fields:
+1. A user deposits USDC into the Base deposit contract.
+2. The backend watches Base and decides the deposit is valid.
+3. The backend calls `deposit_collateral` using the configured Solana `minting_authority`.
+4. The Solana program checks:
+   - caller is `minting_authority`
+   - `deposits_paused == false`
+   - replay marker for `(base_tx_hash, log_index)` does not already exist
+5. The program mints `tUSDC` and increases `UserAccount.total_balance`.
 
-- domain separator: `TRADESTARS_BASE_DEPOSIT_V1`
-- Solana program id
-- Base `chain_id`
-- Base source contract address
-- Solana user pubkey
-- amount
-- Base tx hash
-- Base log index
-
-This is a trusted-attester model, not a trustless bridge.
+This is a centralized minting model.
 
 ## Sequence diagrams
 
@@ -49,19 +43,17 @@ This is a trusted-attester model, not a trustless bridge.
 sequenceDiagram
     participant U as User
     participant B as Base Deposit Contract
-    participant A as EVM Attester
-    participant R as Any Solana Submitter
+    participant S as Backend
+    participant M as Minting Authority
     participant P as Solana Program
     participant T as User tUSDC ATA
 
     U->>B: Deposit USDC on Base
-    B-->>A: Emit deposit event
-    A->>A: Build canonical payload
-    A->>A: Sign payload with EVM key
-    R->>P: deposit_collateral(user, amount, base_tx_hash, log_index, signature)
+    B-->>S: Emit deposit event
+    S->>M: Request mint on Solana
+    M->>P: deposit_collateral(user, amount, base_tx_hash, log_index)
+    P->>P: Require signer == minting_authority
     P->>P: Require deposits_paused == false
-    P->>P: Recover secp256k1 signer
-    P->>P: Match signer to configured EVM attester
     P->>P: Create replay marker for (base_tx_hash, log_index)
     P->>P: Create or load UserAccount
     P->>T: Mint tUSDC
@@ -217,14 +209,14 @@ sequenceDiagram
 
 - `authority`
   Initializes the platform, updates config, and can pause or resume deposits.
+- `minting_authority`
+  The only signer allowed to call `deposit_collateral`.
 - `arena_operator`
   Creates arenas, posts settlement roots, settles batches, cancels pre-start arenas, and refunds batches.
-- `base_attester_eth_address`
-  Trusted EVM signer whose attestation authorizes Base deposit minting.
 - `treasury_wallet`
   Receives fees minted on settled finalization.
 
-There is no multisig or on-chain root rewrite path in this version.
+There is no multisig, attester signature verification, or on-chain root rewrite path in this version.
 
 ## Accounts
 
@@ -241,9 +233,7 @@ Fields:
 - `authority`
 - `arena_operator`
 - `treasury_wallet`
-- `base_attester_eth_address`
-- `base_chain_id`
-- `base_contract_address`
+- `minting_authority`
 - `dispute_window_seconds`
 - `settlement_grace_period_seconds`
 - `deposits_paused`
@@ -339,7 +329,7 @@ stateDiagram-v2
     [*] --> Created
     Created --> Cancelled: operator cancel before start_time
     Created --> SettledPendingClaim: post_settlement_root after end_time
-    Created --> Cancelled: cancel_stale_arena after grace deadline
+    Created --> Cancelled: cancel_stale_arena after grace period
     SettledPendingClaim --> Disputed: disputes reach >= 5%
     SettledPendingClaim --> Finalized: all positions resolved, anyone finalizes
     Disputed --> Cancelled: cancel_disputed_arena
@@ -350,8 +340,7 @@ stateDiagram-v2
 
 ### `deposit_collateral`
 
-- permissionless submitter
-- valid EVM attestation required
+- minting-authority only
 - rejected while `deposits_paused == true`
 - replay-safe on `(base_tx_hash, log_index)`
 
@@ -416,7 +405,8 @@ stateDiagram-v2
 
 ## Security and trust notes
 
-- Deposits are not trustless. The EVM attester is trusted to sign only real Base deposit events.
+- Deposits are centralized. The configured `minting_authority` is trusted to mirror only real Base deposits.
+- The replay marker prevents duplicate minting for the same `(base_tx_hash, log_index)`.
 - The arena operator is trusted to publish the settlement root.
 - The contract enforces payout bounds, replay protection, canonical PDAs, canonical ATAs in batch paths, and settlement/refund one-time resolution.
 - Disputes do not produce corrected roots in this version. A disputed arena refunds instead.

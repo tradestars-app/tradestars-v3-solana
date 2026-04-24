@@ -5,7 +5,7 @@ TradeStars mirrors Base deposits into Solana `tUSDC`, keeps `tUSDC` soulbound wi
 ## Core model
 
 - `deposit_collateral`
-  Anyone may submit a Base deposit attestation. The program verifies a secp256k1 signature from the configured EVM attester, creates a replay marker for `(base_tx_hash, log_index)`, mints `tUSDC`, and increases `UserAccount.total_balance`.
+  Only the configured `minting_authority` may mint mirrored deposits. The instruction creates a replay marker for `(base_tx_hash, log_index)`, mints `tUSDC`, and increases `UserAccount.total_balance`.
 - `create_arena`
   The arena operator and creator co-sign. If the arena has a guaranteed prize, the creator burns that amount immediately and the program locks the same amount in the creator's `in_play_debt`.
 - `join_arena`
@@ -42,7 +42,7 @@ Entry fees are collected at `join_arena`.
 
 - `available_to_withdraw = total_balance - in_play_debt`
 - `tUSDC` cannot be peer-transferred
-- each `(base_tx_hash, log_index)` attestation can be processed once
+- each `(base_tx_hash, log_index)` deposit can be processed once
 - each user can enter the same arena up to `10` times
 - guaranteed prizes are locked at arena creation, not funded later
 - joins and operator cancellation are only allowed before `start_time`
@@ -55,9 +55,9 @@ Entry fees are collected at `join_arena`.
 
 ## Trust assumptions
 
-- Base deposit verification is a trusted-attester model, not a trustless bridge.
-- The configured EVM attester is trusted to sign only real Base deposit events for the configured Base contract and chain.
-- `deposit_collateral` verifies the attester signature and enforces replay protection, but it does not verify a Base event proof on-chain.
+- Base deposit mirroring is centralized in this version.
+- The configured `minting_authority` is trusted to call `deposit_collateral` only for real Base deposits.
+- The replay marker prevents duplicate processing of the same `(base_tx_hash, log_index)`, but the program does not verify a Base event proof on-chain.
 - The configured `arena_operator` is trusted to create arenas and publish the settlement root.
 - Disputes have one on-chain effect in this version: if they reach `>= 5%`, the arena becomes `Disputed` and must refund.
 

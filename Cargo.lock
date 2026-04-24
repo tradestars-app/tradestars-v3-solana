@@ -2832,7 +2832,6 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "solana-keccak-hasher",
- "solana-secp256k1-recover",
  "spl-token-2022",
 ]
 

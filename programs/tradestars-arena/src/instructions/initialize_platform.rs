@@ -37,9 +37,7 @@ pub fn handler(
     ctx: Context<InitializePlatform>,
     arena_operator: Pubkey,
     treasury_wallet: Pubkey,
-    base_attester_eth_address: [u8; 20],
-    base_chain_id: u64,
-    base_contract_address: [u8; 20],
+    minting_authority: Pubkey,
     dispute_window_seconds: u64,
     settlement_grace_period_seconds: u64,
 ) -> Result<()> {
@@ -61,13 +59,8 @@ pub fn handler(
         TradestarsArenaError::InvalidTreasuryWallet
     );
     require!(
-        base_attester_eth_address != [0_u8; 20],
-        TradestarsArenaError::InvalidBaseSource
-    );
-    require!(base_chain_id > 0, TradestarsArenaError::InvalidBaseSource);
-    require!(
-        base_contract_address != [0_u8; 20],
-        TradestarsArenaError::InvalidBaseSource
+        minting_authority != Pubkey::default(),
+        TradestarsArenaError::InvalidRoleKey
     );
 
     let mint_space = tusdc_mint_space()?;
@@ -107,9 +100,7 @@ pub fn handler(
         authority: ctx.accounts.authority.key(),
         arena_operator,
         treasury_wallet,
-        base_attester_eth_address,
-        base_chain_id,
-        base_contract_address,
+        minting_authority,
         dispute_window_seconds,
         settlement_grace_period_seconds,
         deposits_paused: false,

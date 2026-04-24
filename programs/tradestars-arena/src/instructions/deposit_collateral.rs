@@ -7,12 +7,12 @@ use crate::errors::TradestarsArenaError;
 use crate::events::CollateralDeposited;
 use crate::state::{Marker, PlatformConfig, UserAccount};
 use crate::utils::{
-    verify_deposit_attestation, CONFIG_SEED, DEPOSIT_SEED, TUSDC_DECIMALS, TUSDC_MINT_SEED,
+    require_minting_authority, CONFIG_SEED, DEPOSIT_SEED, TUSDC_DECIMALS, TUSDC_MINT_SEED,
     USER_SEED,
 };
 
 #[derive(Accounts)]
-#[instruction(amount: u64, base_tx_hash: [u8; 32], log_index: u32, signature: [u8; 64], recovery_id: u8)]
+#[instruction(amount: u64, base_tx_hash: [u8; 32], log_index: u32)]
 pub struct DepositCollateral<'info> {
     #[account(seeds = [CONFIG_SEED], bump = platform_config.bump)]
     pub platform_config: Account<'info, PlatformConfig>,
@@ -25,7 +25,7 @@ pub struct DepositCollateral<'info> {
 
     #[account(
         init_if_needed,
-        payer = submitter,
+        payer = minting_authority,
         space = UserAccount::LEN,
         seeds = [USER_SEED, user.key().as_ref()],
         bump
@@ -34,7 +34,7 @@ pub struct DepositCollateral<'info> {
 
     #[account(
         init,
-        payer = submitter,
+        payer = minting_authority,
         space = Marker::LEN,
         seeds = [DEPOSIT_SEED, base_tx_hash.as_ref(), &log_index.to_le_bytes()],
         bump
@@ -43,7 +43,7 @@ pub struct DepositCollateral<'info> {
 
     #[account(
         init_if_needed,
-        payer = submitter,
+        payer = minting_authority,
         associated_token::mint = tusdc_mint,
         associated_token::authority = user,
         associated_token::token_program = token_program
@@ -51,7 +51,7 @@ pub struct DepositCollateral<'info> {
     pub user_tusdc: InterfaceAccount<'info, TokenAccount>,
 
     #[account(mut)]
-    pub submitter: Signer<'info>,
+    pub minting_authority: Signer<'info>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
@@ -63,8 +63,6 @@ pub fn handler(
     amount: u64,
     base_tx_hash: [u8; 32],
     log_index: u32,
-    signature: [u8; 64],
-    recovery_id: u8,
 ) -> Result<()> {
     require!(amount > 0, TradestarsArenaError::AmountTooSmall);
     require!(
@@ -76,15 +74,9 @@ pub fn handler(
         !ctx.accounts.platform_config.deposits_paused,
         TradestarsArenaError::DepositsPaused
     );
-    verify_deposit_attestation(
+    require_minting_authority(
         &ctx.accounts.platform_config,
-        ctx.program_id,
-        &ctx.accounts.user.key(),
-        amount,
-        &base_tx_hash,
-        log_index,
-        &signature,
-        recovery_id,
+        &ctx.accounts.minting_authority.key(),
     )?;
 
     let user_account = &mut ctx.accounts.user_account;

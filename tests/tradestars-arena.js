@@ -12,7 +12,6 @@ import {
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { keccak_256 } from "../node_modules/.pnpm/node_modules/@noble/hashes/sha3.js";
-import { secp256k1 } from "../node_modules/.pnpm/@noble+curves@1.9.7/node_modules/@noble/curves/secp256k1.js";
 import { Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 
 const { BN } = anchor.default;
@@ -33,20 +32,10 @@ describe("tradestars-arena", () => {
     program.programId
   );
 
-  const submitter = Keypair.generate();
+  const mintingAuthority = Keypair.generate();
   const arenaOperator = Keypair.generate();
   const treasury = Keypair.generate();
   const intruder = Keypair.generate();
-  const baseChainId = 8453;
-  const baseContractAddress = Uint8Array.from(
-    Array.from({ length: 20 }, (_, index) => index + 1)
-  );
-  const baseAttesterPrivateKey = Uint8Array.from(
-    Array.from({ length: 32 }, (_, index) => index + 11)
-  );
-  const rogueAttesterPrivateKey = Uint8Array.from(
-    Array.from({ length: 32 }, (_, index) => index + 101)
-  );
 
   const bn = (value) => new BN(value.toString());
   const zeroPubkey = new PublicKey(new Uint8Array(32));
@@ -61,50 +50,6 @@ describe("tradestars-arena", () => {
     const buffer = Buffer.alloc(4);
     buffer.writeUInt32LE(value);
     return buffer;
-  };
-
-  const u64LeBuffer = (value) => {
-    const buffer = Buffer.alloc(8);
-    buffer.writeBigUInt64LE(BigInt(value));
-    return buffer;
-  };
-
-  const ethereumAddress = (privateKey) => {
-    const publicKey = secp256k1.getPublicKey(privateKey, false);
-    return Buffer.from(keccak_256(publicKey.slice(1))).subarray(12);
-  };
-
-  const baseAttesterEthAddress = ethereumAddress(baseAttesterPrivateKey);
-
-  const depositDigest = (user, amount, baseTxHash, logIndex) =>
-    Buffer.from(
-      keccak_256(
-        Buffer.concat([
-          Buffer.from("TRADESTARS_BASE_DEPOSIT_V1"),
-          program.programId.toBuffer(),
-          u64LeBuffer(baseChainId),
-          Buffer.from(baseContractAddress),
-          user.toBuffer(),
-          u64LeBuffer(amount),
-          baseTxHash,
-          u32LeBuffer(logIndex),
-        ])
-      )
-    );
-
-  const buildDepositAttestation = (
-    user,
-    amount,
-    baseTxHash,
-    logIndex,
-    privateKey = baseAttesterPrivateKey
-  ) => {
-    const digest = depositDigest(user, amount, baseTxHash, logIndex);
-    const signature = secp256k1.sign(digest, privateKey);
-    return {
-      signature: [...signature.toCompactRawBytes()],
-      recoveryId: signature.recovery,
-    };
   };
 
   const hashPair = (left, right) => {
@@ -253,24 +198,10 @@ describe("tradestars-arena", () => {
     amount,
     baseTxHash,
     logIndex = 0,
-    signer = submitter,
-    attesterPrivateKey = baseAttesterPrivateKey
+    signer = mintingAuthority
   ) => {
-    const attestation = buildDepositAttestation(
-      user,
-      amount,
-      baseTxHash,
-      logIndex,
-      attesterPrivateKey
-    );
     await program.methods
-      .depositCollateral(
-        bn(amount),
-        [...baseTxHash],
-        logIndex,
-        attestation.signature,
-        attestation.recoveryId
-      )
+      .depositCollateral(bn(amount), [...baseTxHash], logIndex)
       .accounts({
         platformConfig,
         tusdcMint,
@@ -281,7 +212,7 @@ describe("tradestars-arena", () => {
           program.programId
         )[0],
         userTusdc: tusdcAta(user),
-        submitter: signer.publicKey,
+        mintingAuthority: signer.publicKey,
         tokenProgram: TOKEN_2022_PROGRAM_ID,
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
@@ -354,7 +285,7 @@ describe("tradestars-arena", () => {
 
   before(async () => {
     await Promise.all([
-      airdrop(submitter.publicKey),
+      airdrop(mintingAuthority.publicKey),
       airdrop(arenaOperator.publicKey),
       airdrop(treasury.publicKey),
       airdrop(intruder.publicKey),
@@ -364,9 +295,7 @@ describe("tradestars-arena", () => {
       .initializePlatform(
         arenaOperator.publicKey,
         treasury.publicKey,
-        [...baseAttesterEthAddress],
-        bn(baseChainId),
-        [...baseContractAddress],
+        mintingAuthority.publicKey,
         bn(2),
         bn(3)
       )
@@ -383,32 +312,23 @@ describe("tradestars-arena", () => {
     await depositCollateral(treasury.publicKey, 20_000_000, bytes32Buffer("treasury-deposit"));
   });
 
-  it("mints soulbound deposits with valid attestations, rejects invalid signatures, and blocks peer transfers", async () => {
+  it("mints soulbound deposits only from the minting authority, rejects unauthorized callers, and blocks peer transfers", async () => {
     const userA = Keypair.generate();
     const userB = Keypair.generate();
     await Promise.all([airdrop(userA.publicKey), airdrop(userB.publicKey)]);
 
     const depositHash = bytes32Buffer("user-a-deposit");
     await expectFailure(
-      depositCollateral(
-        userA.publicKey,
-        5_000_000,
-        depositHash,
-        0,
-        intruder,
-        rogueAttesterPrivateKey
-      ),
-      "InvalidDepositAttestation"
+      depositCollateral(userA.publicKey, 5_000_000, depositHash, 0, intruder),
+      "InvalidMintingAuthority"
     );
 
-    await depositCollateral(userA.publicKey, 5_000_000, depositHash, 0, intruder);
-    await depositCollateral(userA.publicKey, 500_000, depositHash, 1, intruder);
+    await depositCollateral(userA.publicKey, 5_000_000, depositHash);
+    await depositCollateral(userA.publicKey, 500_000, depositHash, 1);
     await depositCollateral(
       userB.publicKey,
       1_000_000,
-      bytes32Buffer("user-b-deposit"),
-      0,
-      intruder
+      bytes32Buffer("user-b-deposit")
     );
 
     await expectFailure(
@@ -444,8 +364,6 @@ describe("tradestars-arena", () => {
           null,
           null,
           null,
-          null,
-          null,
           null
         )
         .accounts({
@@ -461,29 +379,7 @@ describe("tradestars-arena", () => {
         .updatePlatformConfig(
           null,
           null,
-          null,
-          [...new Uint8Array(20)],
-          null,
-          null,
-          null,
-          null
-        )
-        .accounts({
-          platformConfig,
-          authority: authority.publicKey,
-        })
-        .rpc(),
-      "InvalidBaseSource"
-    );
-
-    await expectFailure(
-      program.methods
-        .updatePlatformConfig(
-          null,
-          null,
           zeroPubkey,
-          null,
-          null,
           null,
           null,
           null
@@ -502,9 +398,7 @@ describe("tradestars-arena", () => {
           null,
           null,
           null,
-          [...new Uint8Array(20)],
-          null,
-          null,
+          zeroPubkey,
           null,
           null
         )
@@ -513,17 +407,15 @@ describe("tradestars-arena", () => {
           authority: authority.publicKey,
         })
         .rpc(),
-      "InvalidBaseSource"
+      "InvalidRoleKey"
     );
 
     await expectFailure(
       program.methods
         .updatePlatformConfig(
+          zeroPubkey,
           null,
           null,
-          null,
-          null,
-          bn(0),
           null,
           null,
           null
@@ -533,7 +425,7 @@ describe("tradestars-arena", () => {
           authority: authority.publicKey,
         })
         .rpc(),
-      "InvalidBaseSource"
+      "InvalidRoleKey"
     );
   });
 

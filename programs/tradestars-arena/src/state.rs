@@ -17,9 +17,7 @@ pub struct PlatformConfig {
     pub authority: Pubkey,
     pub arena_operator: Pubkey,
     pub treasury_wallet: Pubkey,
-    pub base_attester_eth_address: [u8; 20],
-    pub base_chain_id: u64,
-    pub base_contract_address: [u8; 20],
+    pub minting_authority: Pubkey,
     pub dispute_window_seconds: u64,
     pub settlement_grace_period_seconds: u64,
     pub deposits_paused: bool,
@@ -27,7 +25,7 @@ pub struct PlatformConfig {
 }
 
 impl PlatformConfig {
-    pub const LEN: usize = 8 + (32 * 3) + 20 + 8 + 20 + 8 + 8 + 1 + 1;
+    pub const LEN: usize = 8 + (32 * 4) + 8 + 8 + 1 + 1;
 }
 
 #[account]
