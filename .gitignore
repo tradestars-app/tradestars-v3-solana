@@ -13,6 +13,9 @@ node_modules/
 
 # --- Environment & Keys ---
 .env
+.env.*
+*.keypair.json
+*-keypair.json
 
 # IDE & OS
 .DS_Store

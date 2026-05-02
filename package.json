@@ -6,10 +6,9 @@
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
-    "test": "anchor test",
+    "test": "anchor test --skip-deploy",
     "build": "anchor build",
-    "deploy:devnet": "anchor deploy --provider.cluster devnet",
-    "deploy:mainnet": "anchor deploy --provider.cluster mainnet"
+    "smoke:deposit:devnet": "node scripts/devnet-smoke-deposit.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.0",

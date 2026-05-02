@@ -69,4 +69,39 @@ anchor build
 anchor test
 ```
 
+## Program id and deploy workflow
+
+`Anchor.toml` is the source of truth for program ids. The Rust `declare_id!`
+must match the program id for the cluster being built and deployed.
+
+Do not use `anchor deploy` for devnet/mainnet in this repo. The generated
+`target/deploy/*-keypair.json` file is a local build artifact and may not match
+the deployed upgradeable program id.
+
+Use the package scripts instead:
+
+```bash
+pnpm build
+pnpm test
+pnpm smoke:deposit:devnet
+```
+
+`pnpm test` runs `anchor test --skip-deploy` and loads the built program into the
+local validator at the configured localnet program id through `[[test.genesis]]`.
+
+Devnet upgrades should be done explicitly with the current upgrade authority.
+Read the devnet program id from `Anchor.toml`, then run:
+
+```bash
+pnpm build
+solana program deploy --url devnet --program-id <devnet-program-id-from-Anchor.toml> target/deploy/tradestars_arena.so
+```
+
+For the deposit smoke test, the local wallet must be the configured
+`minting_authority` on devnet. Override the wallet or RPC with:
+
+```bash
+ANCHOR_WALLET=/path/to/id.json ANCHOR_PROVIDER_URL=https://api.devnet.solana.com pnpm smoke:deposit:devnet
+```
+
 Detailed architecture and Mermaid diagrams are in [docs/vault-architecture.md](docs/vault-architecture.md).

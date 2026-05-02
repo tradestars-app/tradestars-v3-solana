@@ -10,7 +10,7 @@ skip-lint = false
 tradestars_arena = "2YEsWGLfhsUwDWoFCEZQQeES8KN9jHHRXLkbtwoDQGV8"
 
 [programs.localnet]
-tradestars_arena = "6W1s28JYjDunfsFFAv7TcWQWJBUxCPpn8WYMinRyppPy"
+tradestars_arena = "2YEsWGLfhsUwDWoFCEZQQeES8KN9jHHRXLkbtwoDQGV8"
 
 [programs.mainnet]
 tradestars_arena = "2YEsWGLfhsUwDWoFCEZQQeES8KN9jHHRXLkbtwoDQGV8"
@@ -29,3 +29,7 @@ test = "pnpm exec mocha -t 1000000 tests/tradestars-arena.js"
 startup_wait = 10000
 shutdown_wait = 2000
 upgradeable = false
+
+[[test.genesis]]
+address = "2YEsWGLfhsUwDWoFCEZQQeES8KN9jHHRXLkbtwoDQGV8"
+program = "target/deploy/tradestars_arena.so"

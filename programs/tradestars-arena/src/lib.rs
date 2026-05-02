@@ -10,7 +10,7 @@ pub mod utils;
 
 use instructions::*;
 
-declare_id!("6W1s28JYjDunfsFFAv7TcWQWJBUxCPpn8WYMinRyppPy");
+declare_id!("2YEsWGLfhsUwDWoFCEZQQeES8KN9jHHRXLkbtwoDQGV8");
 
 #[program]
 pub mod tradestars_arena {
