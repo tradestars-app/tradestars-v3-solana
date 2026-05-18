@@ -1,7 +1,8 @@
 use anchor_lang::prelude::*;
 
 pub const MAX_ENTRIES_PER_USER: u8 = 10;
-pub const DISPUTE_THRESHOLD_BPS: u16 = 500;
+pub const DISPUTE_THRESHOLD_BPS: u16 = 2_000;
+pub const DISPUTE_MIN_PARTICIPANTS: u32 = 3;
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ArenaStatus {
@@ -61,6 +62,7 @@ pub struct ArenaAccount {
     pub total_pool: u64,
     pub total_claimed_payout: u64,
     pub start_time: i64,
+    pub entry_close_time: i64,
     pub end_time: i64,
     pub merkle_root: [u8; 32],
     pub settlement_timestamp: i64,
@@ -81,7 +83,7 @@ impl ArenaAccount {
         + 8
         + 2
         + (8 * 6)
-        + (8 * 4)
+        + (8 * 5)
         + 32
         + (4 * 4)
         + 32
@@ -119,6 +121,7 @@ pub struct CreateArenaParams {
     pub fee_bps: u16,
     pub guaranteed_prize_target: u64,
     pub start_time: i64,
+    pub entry_close_time: i64,
     pub end_time: i64,
     pub metadata_hash: [u8; 32],
 }

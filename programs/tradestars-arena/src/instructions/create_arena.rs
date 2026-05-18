@@ -69,7 +69,14 @@ pub fn handler(
 
     let now = Clock::get()?.unix_timestamp;
     require!(params.start_time > now, TradestarsArenaError::InvalidTime);
-    require!(params.end_time > params.start_time, TradestarsArenaError::InvalidTime);
+    require!(
+        params.entry_close_time >= params.start_time,
+        TradestarsArenaError::InvalidTime
+    );
+    require!(
+        params.end_time > params.entry_close_time,
+        TradestarsArenaError::InvalidTime
+    );
 
     let creator_user_account = &mut ctx.accounts.creator_user_account;
     if creator_user_account.owner == Pubkey::default() {
@@ -122,6 +129,7 @@ pub fn handler(
         total_pool: params.guaranteed_prize_target,
         total_claimed_payout: 0,
         start_time: params.start_time,
+        entry_close_time: params.entry_close_time,
         end_time: params.end_time,
         merkle_root: [0; 32],
         settlement_timestamp: 0,
@@ -142,6 +150,7 @@ pub fn handler(
         guaranteed_prize_target: params.guaranteed_prize_target,
         guaranteed_prize_reserved: params.guaranteed_prize_target,
         start_time: params.start_time,
+        entry_close_time: params.entry_close_time,
         end_time: params.end_time,
         metadata_hash: params.metadata_hash,
         timestamp: now,

@@ -45,7 +45,8 @@ Entry fees are collected at `join_arena`.
 - each `(base_tx_hash, log_index)` deposit can be processed once
 - each user can enter the same arena up to `10` times
 - guaranteed prizes are locked at arena creation, not funded later
-- joins and operator cancellation are only allowed before `start_time`
+- joins are allowed before `entry_close_time`
+- operator cancellation is only allowed before `start_time`
 - a settlement root can be posted only once, only after `end_time`
 - `total_pool = guaranteed_prize_reserved + (total_entry_fees_locked - fee_accrued)`
 - `total_claimed_payout <= total_pool`
@@ -59,7 +60,7 @@ Entry fees are collected at `join_arena`.
 - The configured `minting_authority` is trusted to call `deposit_collateral` only for real Base deposits.
 - The replay marker prevents duplicate processing of the same `(base_tx_hash, log_index)`, but the program does not verify a Base event proof on-chain.
 - The configured `arena_operator` is trusted to create arenas and publish the settlement root.
-- Disputes have one on-chain effect in this version: if they reach `>= 5%`, the arena becomes `Disputed` and must refund.
+- Disputes have one on-chain effect in this version: if they reach the configured threshold (`>= 20%`, with a minimum of 3 participants for arenas with 3+ participants), the arena becomes `Disputed` and must refund.
 
 ## Local commands
 

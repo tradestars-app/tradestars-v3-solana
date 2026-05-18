@@ -19,6 +19,7 @@ pub struct ArenaCreated {
     pub guaranteed_prize_target: u64,
     pub guaranteed_prize_reserved: u64,
     pub start_time: i64,
+    pub entry_close_time: i64,
     pub end_time: i64,
     pub metadata_hash: [u8; 32],
     pub timestamp: i64,

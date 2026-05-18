@@ -65,7 +65,10 @@ pub fn handler(ctx: Context<JoinArena>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let arena = &mut ctx.accounts.arena;
     require!(arena.status == ArenaStatus::Created, TradestarsArenaError::ArenaNotCreated);
-    require!(now < arena.start_time, TradestarsArenaError::InvalidTime);
+    require!(
+        now < arena.entry_close_time,
+        TradestarsArenaError::InvalidTime
+    );
 
     let user_account = &mut ctx.accounts.user_account;
     require!(

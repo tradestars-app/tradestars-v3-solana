@@ -5,7 +5,8 @@ use spl_token_2022::extension::ExtensionType;
 
 use crate::errors::TradestarsArenaError;
 use crate::state::{
-    ArenaAccount, ArenaPosition, ArenaStatus, PlatformConfig, UserAccount, DISPUTE_THRESHOLD_BPS,
+    ArenaAccount, ArenaPosition, ArenaStatus, PlatformConfig, UserAccount, DISPUTE_MIN_PARTICIPANTS,
+    DISPUTE_THRESHOLD_BPS,
 };
 
 pub const CONFIG_SEED: &[u8] = b"config";
@@ -115,12 +116,20 @@ pub fn fee_amount(entry_fee: u64, fee_bps: u16) -> Result<u64> {
 }
 
 pub fn dispute_threshold_reached(dispute_count: u32, participant_count: u32) -> Result<bool> {
-    Ok((dispute_count as u128)
-        .checked_mul(10_000)
+    if participant_count == 0 {
+        return Ok(false);
+    }
+
+    let percentage_threshold = (participant_count as u128)
+        .checked_mul(DISPUTE_THRESHOLD_BPS as u128)
         .ok_or(TradestarsArenaError::MathOverflow)?
-        >= (participant_count as u128)
-            .checked_mul(DISPUTE_THRESHOLD_BPS as u128)
-            .ok_or(TradestarsArenaError::MathOverflow)?)
+        .checked_add(9_999)
+        .ok_or(TradestarsArenaError::MathOverflow)?
+        .checked_div(10_000)
+        .ok_or(TradestarsArenaError::MathOverflow)? as u32;
+    let required_disputes = percentage_threshold.max(participant_count.min(DISPUTE_MIN_PARTICIPANTS));
+
+    Ok(dispute_count >= required_disputes)
 }
 
 pub fn net_entry_pool(arena: &ArenaAccount) -> Result<u64> {

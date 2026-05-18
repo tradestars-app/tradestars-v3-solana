@@ -229,6 +229,7 @@ describe("tradestars-arena", () => {
     feeBps,
     guaranteedPrizeTarget,
     startTime,
+    entryCloseTime = startTime,
     endTime,
     metadataHash = bytes32Buffer("metadata"),
   }) => {
@@ -240,6 +241,7 @@ describe("tradestars-arena", () => {
         feeBps,
         guaranteedPrizeTarget: bn(guaranteedPrizeTarget),
         startTime: bn(startTime),
+        entryCloseTime: bn(entryCloseTime),
         endTime: bn(endTime),
         metadataHash: [...metadataHash],
       })
