@@ -151,6 +151,11 @@ pub fn unused_guarantee(arena: &ArenaAccount) -> Result<u64> {
         .ok_or(TradestarsArenaError::MathOverflow.into())
 }
 
+pub fn settlement_payout_cap(arena: &ArenaAccount) -> Result<u64> {
+    let entry_pool = net_entry_pool(arena)?;
+    Ok(entry_pool.max(arena.guaranteed_prize_reserved))
+}
+
 pub fn ensure_settlement_claimable(arena: &ArenaAccount, now: i64) -> Result<()> {
     require!(
         arena.status == ArenaStatus::SettledPendingClaim,
@@ -187,7 +192,7 @@ pub fn apply_settlement(
         .checked_add(payout_amount)
         .ok_or(TradestarsArenaError::MathOverflow)?;
     require!(
-        next_total_claimed <= arena.total_pool,
+        next_total_claimed <= settlement_payout_cap(arena)?,
         TradestarsArenaError::ArenaPoolExceeded
     );
 

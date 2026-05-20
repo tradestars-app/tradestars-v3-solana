@@ -49,7 +49,8 @@ Entry fees are collected at `join_arena`.
 - operator cancellation is only allowed before `start_time`
 - a settlement root can be posted only once, only after `end_time`
 - `total_pool = guaranteed_prize_reserved + (total_entry_fees_locked - fee_accrued)`
-- `total_claimed_payout <= total_pool`
+- `settlement_payout_cap = max(guaranteed_prize_reserved, total_entry_fees_locked - fee_accrued)`
+- `total_claimed_payout <= settlement_payout_cap`
 - disputed arenas can only cancel and refund
 - cancelled arenas refund the full committed amount
 - fees are minted to treasury only when a settled arena is finalized

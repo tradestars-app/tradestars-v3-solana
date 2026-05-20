@@ -298,6 +298,7 @@ Derived values:
 
 ```text
 net_entry_pool = total_entry_fees_locked - fee_accrued
+settlement_payout_cap = max(net_entry_pool, guaranteed_prize_reserved)
 guaranteed_prize_used = max(total_claimed_payout - net_entry_pool, 0)
 unused_guarantee = guaranteed_prize_reserved - guaranteed_prize_used
 ```

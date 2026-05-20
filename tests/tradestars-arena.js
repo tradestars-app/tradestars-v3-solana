@@ -887,8 +887,8 @@ describe("tradestars-arena", () => {
     await joinArena({ arena, user: userB });
     await sleep(4200);
 
-    const leafA = merkleLeaf(arenaId, 1, userA.publicKey, 4_000_000, 8_000_000);
-    const leafB = merkleLeaf(arenaId, 1, userB.publicKey, 4_000_000, 4_200_000);
+    const leafA = merkleLeaf(arenaId, 1, userA.publicKey, 4_000_000, 4_000_000);
+    const leafB = merkleLeaf(arenaId, 1, userB.publicKey, 4_000_000, 3_200_000);
     const { root, proofs } = buildMerkle([leafA, leafB]);
 
     await program.methods
@@ -907,7 +907,7 @@ describe("tradestars-arena", () => {
       .settleArenaBatch([
         {
           lockedAmount: bn(4_000_000),
-          payoutAmount: bn(8_000_000),
+          payoutAmount: bn(4_000_000),
           proof: proofs[0].map((node) => [...node]),
         },
       ])
@@ -928,7 +928,7 @@ describe("tradestars-arena", () => {
     await confirm(batchSig);
 
     const claimSig = await program.methods
-      .claimWinnings(bn(4_000_000), bn(4_200_000), proofs[1].map((node) => [...node]))
+      .claimWinnings(bn(4_000_000), bn(3_200_000), proofs[1].map((node) => [...node]))
       .accounts({
         platformConfig,
         arena,
@@ -945,17 +945,17 @@ describe("tradestars-arena", () => {
     await confirm(claimSig);
 
     let arenaAccount = await program.account.arenaAccount.fetch(arena);
-    assert.equal(arenaAccount.totalClaimedPayout.toNumber(), 12_200_000);
+    assert.equal(arenaAccount.totalClaimedPayout.toNumber(), 7_200_000);
     assert.equal(arenaAccount.resolvedCount, 2);
 
     const userAAccount = await program.account.userAccount.fetch(userPda(userA.publicKey));
     const userBAccount = await program.account.userAccount.fetch(userPda(userB.publicKey));
     const creatorAccount = await program.account.userAccount.fetch(userPda(authority.publicKey));
-    assert.equal(userAAccount.totalBalance.toNumber(), 14_000_000);
-    assert.equal(userBAccount.totalBalance.toNumber(), 10_200_000);
+    assert.equal(userAAccount.totalBalance.toNumber(), 10_000_000);
+    assert.equal(userBAccount.totalBalance.toNumber(), 9_200_000);
     assert.equal(creatorAccount.inPlayDebt.toNumber(), 5_000_000);
-    assert.equal(await getAtaAmount(userA.publicKey), 14_000_000);
-    assert.equal(await getAtaAmount(userB.publicKey), 10_200_000);
+    assert.equal(await getAtaAmount(userA.publicKey), 10_000_000);
+    assert.equal(await getAtaAmount(userB.publicKey), 9_200_000);
 
     const finalizeSig = await program.methods
       .finalizeArena()
@@ -984,9 +984,70 @@ describe("tradestars-arena", () => {
     assert.deepEqual(arenaAccount.status, { finalized: {} });
     assert.equal(treasuryAccount.totalBalance.toNumber(), 20_800_000);
     assert.equal(await getAtaAmount(treasury.publicKey), 20_800_000);
-    assert.equal(creatorFinalAccount.totalBalance.toNumber(), 15_000_000);
+    assert.equal(creatorFinalAccount.totalBalance.toNumber(), 20_000_000);
     assert.equal(creatorFinalAccount.inPlayDebt.toNumber(), 0);
-    assert.equal(await getAtaAmount(authority.publicKey), 15_000_000);
+    assert.equal(await getAtaAmount(authority.publicKey), 20_000_000);
+  });
+
+  it("rejects settlement roots that try to pay guarantee plus net entries", async () => {
+    const creator = await createUser(10_000_000);
+    const user = await createUser(10_000_000);
+    const arenaId = bytes32Buffer("settle-cap");
+    const now = Math.floor(Date.now() / 1000);
+    const arena = await createArena({
+      arenaId,
+      creator: creator.publicKey,
+      creatorSigner: creator,
+      entryFee: 4_000_000,
+      feeBps: 1_000,
+      guaranteedPrizeTarget: 5_000_000,
+      startTime: now + 2,
+      endTime: now + 4,
+    });
+
+    await joinArena({ arena, user });
+    await sleep(4200);
+
+    const leaf = merkleLeaf(arenaId, 1, user.publicKey, 4_000_000, 8_600_000);
+    const { root, proofs } = buildMerkle([leaf]);
+
+    await program.methods
+      .postSettlementRoot([...root])
+      .accounts({
+        platformConfig,
+        arena,
+        authority: arenaOperator.publicKey,
+      })
+      .signers([arenaOperator])
+      .rpc();
+
+    await sleep(2500);
+
+    await expectFailure(
+      program.methods
+        .settleArenaBatch([
+          {
+            lockedAmount: bn(4_000_000),
+            payoutAmount: bn(8_600_000),
+            proof: proofs[0].map((node) => [...node]),
+          },
+        ])
+        .accounts({
+          platformConfig,
+          arena,
+          authority: arenaOperator.publicKey,
+          tusdcMint,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: userPda(user.publicKey), isWritable: true, isSigner: false },
+          { pubkey: tusdcAta(user.publicKey), isWritable: true, isSigner: false },
+          { pubkey: positionPda(arena, user.publicKey), isWritable: true, isSigner: false },
+        ])
+        .signers([arenaOperator])
+        .rpc(),
+      "ArenaPoolExceeded"
+    );
   });
 
   it("cancels arenas with admin batch refunds, user fallback refunds, and releases the creator guarantee lock", async () => {
