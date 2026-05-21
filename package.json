@@ -8,7 +8,9 @@
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
     "test": "anchor test --skip-deploy",
     "build": "anchor build",
-    "smoke:deposit:devnet": "node scripts/devnet-smoke-deposit.mjs"
+    "deploy:devnet": "solana program deploy --program-id 2YEsWGLfhsUwDWoFCEZQQeES8KN9jHHRXLkbtwoDQGV8 --upgrade-authority ~/.config/solana/id.json --max-len 800000 --url devnet target/deploy/tradestars_arena.so",
+    "smoke:deposit:devnet": "node scripts/devnet-smoke-deposit.mjs",
+    "config:wallet-deposit:devnet": "node scripts/devnet-set-wallet-deposit-config.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.0",

@@ -5,6 +5,7 @@ pub mod claim_refund;
 pub mod claim_winnings;
 pub mod create_arena;
 pub mod deposit_collateral;
+pub mod deposit_wallet_usdc;
 pub mod finalize_arena;
 pub mod initialize_platform;
 pub mod join_arena;
@@ -12,6 +13,7 @@ pub mod post_settlement_root;
 pub mod refund_arena_batch;
 pub mod settle_arena_batch;
 pub mod set_deposits_paused;
+pub mod set_wallet_deposit_config;
 pub mod submit_dispute;
 pub mod update_platform_config;
 pub mod withdraw_request;
@@ -31,6 +33,8 @@ pub use create_arena::*;
 #[allow(ambiguous_glob_reexports)]
 pub use deposit_collateral::*;
 #[allow(ambiguous_glob_reexports)]
+pub use deposit_wallet_usdc::*;
+#[allow(ambiguous_glob_reexports)]
 pub use finalize_arena::*;
 #[allow(ambiguous_glob_reexports)]
 pub use initialize_platform::*;
@@ -44,6 +48,8 @@ pub use refund_arena_batch::*;
 pub use settle_arena_batch::*;
 #[allow(ambiguous_glob_reexports)]
 pub use set_deposits_paused::*;
+#[allow(ambiguous_glob_reexports)]
+pub use set_wallet_deposit_config::*;
 #[allow(ambiguous_glob_reexports)]
 pub use submit_dispute::*;
 #[allow(ambiguous_glob_reexports)]

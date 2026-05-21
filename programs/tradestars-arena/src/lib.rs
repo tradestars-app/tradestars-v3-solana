@@ -68,6 +68,21 @@ pub mod tradestars_arena {
         )
     }
 
+    pub fn set_wallet_deposit_config(
+        ctx: Context<SetWalletDepositConfig>,
+        usdc_mint: Pubkey,
+    ) -> Result<()> {
+        instructions::set_wallet_deposit_config::handler(ctx, usdc_mint)
+    }
+
+    pub fn deposit_wallet_usdc(
+        ctx: Context<DepositWalletUsdc>,
+        amount: u64,
+        nonce: u64,
+    ) -> Result<()> {
+        instructions::deposit_wallet_usdc::handler(ctx, amount, nonce)
+    }
+
     pub fn create_arena(
         ctx: Context<CreateArena>,
         arena_id: [u8; 32],

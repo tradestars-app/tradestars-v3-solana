@@ -64,6 +64,8 @@ pub enum TradestarsArenaError {
     InvalidTokenProgram,
     #[msg("Invalid token account")]
     InvalidTokenAccount,
+    #[msg("Invalid collateral mint")]
+    InvalidCollateralMint,
     #[msg("User is not an active participant in the arena")]
     NotArenaParticipant,
     #[msg("Arena is not in the created state")]

@@ -14,6 +14,8 @@ pub const USER_SEED: &[u8] = b"user";
 pub const ARENA_SEED: &[u8] = b"arena";
 pub const POSITION_SEED: &[u8] = b"position";
 pub const DEPOSIT_SEED: &[u8] = b"deposit";
+pub const WALLET_DEPOSIT_CONFIG_SEED: &[u8] = b"wallet_deposit_config";
+pub const WALLET_DEPOSIT_SEED: &[u8] = b"wallet_deposit";
 pub const TUSDC_MINT_SEED: &[u8] = b"tusdc_mint";
 pub const TUSDC_DECIMALS: u8 = 6;
 

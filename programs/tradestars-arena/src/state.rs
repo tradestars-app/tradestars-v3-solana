@@ -30,6 +30,16 @@ impl PlatformConfig {
 }
 
 #[account]
+pub struct WalletDepositConfig {
+    pub usdc_mint: Pubkey,
+    pub bump: u8,
+}
+
+impl WalletDepositConfig {
+    pub const LEN: usize = 8 + 32 + 1;
+}
+
+#[account]
 pub struct UserAccount {
     pub owner: Pubkey,
     pub total_balance: u64,

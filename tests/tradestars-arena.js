@@ -2,13 +2,17 @@ import * as anchor from "@coral-xyz/anchor";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   ExtensionType,
+  TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
+  createMint,
+  createAssociatedTokenAccountInstruction,
   createInitializeAccountInstruction,
   createInitializeImmutableOwnerInstruction,
   createTransferCheckedInstruction,
   getAccount,
   getAccountLen,
   getAssociatedTokenAddressSync,
+  mintTo,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { keccak_256 } from "../node_modules/.pnpm/node_modules/@noble/hashes/sha3.js";
@@ -31,11 +35,16 @@ describe("tradestars-arena", () => {
     [Buffer.from("tusdc_mint")],
     program.programId
   );
+  const [walletDepositConfig] = PublicKey.findProgramAddressSync(
+    [Buffer.from("wallet_deposit_config")],
+    program.programId
+  );
 
   const mintingAuthority = Keypair.generate();
   const arenaOperator = Keypair.generate();
   const treasury = Keypair.generate();
   const intruder = Keypair.generate();
+  let walletUsdcMint;
 
   const bn = (value) => new BN(value.toString());
   const zeroPubkey = new PublicKey(new Uint8Array(32));
@@ -49,6 +58,12 @@ describe("tradestars-arena", () => {
   const u32LeBuffer = (value) => {
     const buffer = Buffer.alloc(4);
     buffer.writeUInt32LE(value);
+    return buffer;
+  };
+
+  const u64LeBuffer = (value) => {
+    const buffer = Buffer.alloc(8);
+    buffer.writeBigUInt64LE(BigInt(value));
     return buffer;
   };
 
@@ -106,6 +121,12 @@ describe("tradestars-arena", () => {
       program.programId
     )[0];
 
+  const walletDepositMarker = (user, nonce) =>
+    PublicKey.findProgramAddressSync(
+      [Buffer.from("wallet_deposit"), user.toBuffer(), u64LeBuffer(nonce)],
+      program.programId
+    )[0];
+
   const arenaPda = (arenaId) =>
     PublicKey.findProgramAddressSync(
       [Buffer.from("arena"), arenaId],
@@ -127,6 +148,35 @@ describe("tradestars-arena", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
+  const usdcAta = (owner, allowOwnerOffCurve = false, mint = walletUsdcMint) =>
+    getAssociatedTokenAddressSync(
+      mint,
+      owner,
+      allowOwnerOffCurve,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+  const createAta = async (
+    payer,
+    ata,
+    owner,
+    mint,
+    tokenProgram = TOKEN_PROGRAM_ID
+  ) => {
+    const tx = new Transaction().add(
+      createAssociatedTokenAccountInstruction(
+        payer.publicKey,
+        ata,
+        owner,
+        mint,
+        tokenProgram,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      )
+    );
+    await provider.sendAndConfirm(tx, [payer]);
+  };
+
   const getAtaAmount = async (owner, allowOwnerOffCurve = false) =>
     Number(
       (
@@ -135,6 +185,18 @@ describe("tradestars-arena", () => {
           tusdcAta(owner, allowOwnerOffCurve),
           "processed",
           TOKEN_2022_PROGRAM_ID
+        )
+      ).amount
+    );
+
+  const getSplAtaAmount = async (owner, allowOwnerOffCurve = false, mint = walletUsdcMint) =>
+    Number(
+      (
+        await getAccount(
+          provider.connection,
+          usdcAta(owner, allowOwnerOffCurve, mint),
+          "processed",
+          TOKEN_PROGRAM_ID
         )
       ).amount
     );
@@ -310,8 +372,99 @@ describe("tradestars-arena", () => {
       })
       .rpc();
 
+    walletUsdcMint = await createMint(
+      provider.connection,
+      authority.payer,
+      authority.publicKey,
+      null,
+      6,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
+    );
+
+    await program.methods
+      .setWalletDepositConfig(walletUsdcMint)
+      .accounts({
+        platformConfig,
+        walletDepositConfig,
+        authority: authority.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
     await depositCollateral(authority.publicKey, 20_000_000, bytes32Buffer("creator-deposit"));
     await depositCollateral(treasury.publicKey, 20_000_000, bytes32Buffer("treasury-deposit"));
+  });
+
+  it("accepts signed wallet USDC deposits, mints playable USD, and blocks replays", async () => {
+    const user = Keypair.generate();
+    await airdrop(user.publicKey);
+
+    const userUsdc = usdcAta(user.publicKey);
+    await createAta(authority.payer, userUsdc, user.publicKey, walletUsdcMint);
+    await mintTo(
+      provider.connection,
+      authority.payer,
+      walletUsdcMint,
+      userUsdc,
+      authority.payer,
+      3_000_000,
+      [],
+      undefined,
+      TOKEN_PROGRAM_ID
+    );
+
+    await program.methods
+      .depositWalletUsdc(bn(1_500_000), bn(7))
+      .accountsPartial({
+        platformConfig,
+        walletDepositConfig,
+        tusdcMint,
+        usdcMint: walletUsdcMint,
+        user: user.publicKey,
+        userAccount: userPda(user.publicKey),
+        walletDepositMarker: walletDepositMarker(user.publicKey, 7),
+        userUsdc,
+        usdcVault: usdcAta(platformConfig, true),
+        userTusdc: tusdcAta(user.publicKey),
+        usdcTokenProgram: TOKEN_PROGRAM_ID,
+        tusdcTokenProgram: TOKEN_2022_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([user])
+      .rpc();
+
+    const userAccount = await program.account.userAccount.fetch(userPda(user.publicKey));
+    assert.equal(userAccount.totalBalance.toNumber(), 1_500_000);
+    assert.equal(await getAtaAmount(user.publicKey), 1_500_000);
+    assert.equal(await getSplAtaAmount(user.publicKey), 1_500_000);
+    assert.equal(await getSplAtaAmount(platformConfig, true), 1_500_000);
+
+    await expectFailure(
+      program.methods
+        .depositWalletUsdc(bn(1), bn(7))
+        .accountsPartial({
+          platformConfig,
+          walletDepositConfig,
+          tusdcMint,
+          usdcMint: walletUsdcMint,
+          user: user.publicKey,
+          userAccount: userPda(user.publicKey),
+          walletDepositMarker: walletDepositMarker(user.publicKey, 7),
+          userUsdc,
+          usdcVault: usdcAta(platformConfig, true),
+          userTusdc: tusdcAta(user.publicKey),
+          usdcTokenProgram: TOKEN_PROGRAM_ID,
+          tusdcTokenProgram: TOKEN_2022_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([user])
+        .rpc(),
+      "already in use"
+    );
   });
 
   it("mints soulbound deposits only from the minting authority, rejects unauthorized callers, and blocks peer transfers", async () => {
@@ -455,7 +608,10 @@ describe("tradestars-arena", () => {
     await joinArena({ arena, user: player });
     await sleep(2200);
 
-    await expectFailure(joinArena({ arena, user: player }), "InvalidTime");
+    await expectFailure(
+      joinArena({ arena, user: player }),
+      "Invalid time configuration"
+    );
     await expectFailure(
       program.methods
         .cancelArena()
@@ -563,9 +719,20 @@ describe("tradestars-arena", () => {
       .signers([userA])
       .rpc();
 
+    await program.methods
+      .submitDispute()
+      .accounts({
+        platformConfig,
+        arena,
+        position: positionPda(arena, userB.publicKey),
+        user: userB.publicKey,
+      })
+      .signers([userB])
+      .rpc();
+
     let arenaAccount = await program.account.arenaAccount.fetch(arena);
     assert.deepEqual(arenaAccount.status, { disputed: {} });
-    assert.equal(arenaAccount.disputeCount, 1);
+    assert.equal(arenaAccount.disputeCount, 2);
 
     await expectFailure(
       program.methods

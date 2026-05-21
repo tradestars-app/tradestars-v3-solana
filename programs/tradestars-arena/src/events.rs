@@ -116,3 +116,22 @@ pub struct WithdrawRequested {
     pub available_to_withdraw: u64,
     pub timestamp: i64,
 }
+
+
+#[event]
+pub struct WalletDepositConfigUpdated {
+    pub usdc_mint: Pubkey,
+    pub authority: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct WalletUsdcDeposited {
+    pub user: Pubkey,
+    pub amount: u64,
+    pub nonce: u64,
+    pub usdc_mint: Pubkey,
+    pub usdc_vault: Pubkey,
+    pub new_total_balance: u64,
+    pub timestamp: i64,
+}
