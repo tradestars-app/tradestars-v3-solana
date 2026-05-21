@@ -6,7 +6,7 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::TradestarsArenaError;
-use crate::events::WalletUsdcDeposited;
+use crate::events::ExternalWalletUsdcDeposited;
 use crate::state::{Marker, PlatformConfig, UserAccount, WalletDepositConfig};
 use crate::utils::{
     CONFIG_SEED, TUSDC_DECIMALS, TUSDC_MINT_SEED, USER_SEED, WALLET_DEPOSIT_CONFIG_SEED,
@@ -15,7 +15,7 @@ use crate::utils::{
 
 #[derive(Accounts)]
 #[instruction(amount: u64, nonce: u64)]
-pub struct DepositWalletUsdc<'info> {
+pub struct DepositExternalWalletUsdc<'info> {
     #[account(seeds = [CONFIG_SEED], bump = platform_config.bump)]
     pub platform_config: Box<Account<'info, PlatformConfig>>,
 
@@ -31,22 +31,33 @@ pub struct DepositWalletUsdc<'info> {
     pub usdc_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(mut)]
-    pub user: Signer<'info>,
+    pub source_authority: Signer<'info>,
+
+    /// CHECK: canonical TradeStars wallet receiving playable USD.
+    pub destination_user: UncheckedAccount<'info>,
+
+    #[account(mut)]
+    pub fee_payer: Signer<'info>,
 
     #[account(
         init_if_needed,
-        payer = user,
+        payer = fee_payer,
         space = UserAccount::LEN,
-        seeds = [USER_SEED, user.key().as_ref()],
+        seeds = [USER_SEED, destination_user.key().as_ref()],
         bump
     )]
     pub user_account: Box<Account<'info, UserAccount>>,
 
     #[account(
         init,
-        payer = user,
+        payer = fee_payer,
         space = Marker::LEN,
-        seeds = [WALLET_DEPOSIT_SEED, user.key().as_ref(), &nonce.to_le_bytes()],
+        seeds = [
+            WALLET_DEPOSIT_SEED,
+            destination_user.key().as_ref(),
+            source_authority.key().as_ref(),
+            &nonce.to_le_bytes()
+        ],
         bump
     )]
     pub wallet_deposit_marker: Box<Account<'info, Marker>>,
@@ -54,14 +65,14 @@ pub struct DepositWalletUsdc<'info> {
     #[account(
         mut,
         associated_token::mint = usdc_mint,
-        associated_token::authority = user,
+        associated_token::authority = source_authority,
         associated_token::token_program = usdc_token_program
     )]
-    pub user_usdc: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub source_usdc: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         init_if_needed,
-        payer = user,
+        payer = fee_payer,
         associated_token::mint = usdc_mint,
         associated_token::authority = platform_config,
         associated_token::token_program = usdc_token_program
@@ -70,12 +81,12 @@ pub struct DepositWalletUsdc<'info> {
 
     #[account(
         init_if_needed,
-        payer = user,
+        payer = fee_payer,
         associated_token::mint = tusdc_mint,
-        associated_token::authority = user,
+        associated_token::authority = destination_user,
         associated_token::token_program = tusdc_token_program
     )]
-    pub user_tusdc: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub destination_tusdc: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub usdc_token_program: Interface<'info, TokenInterface>,
     pub tusdc_token_program: Interface<'info, TokenInterface>,
@@ -83,7 +94,7 @@ pub struct DepositWalletUsdc<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<DepositWalletUsdc>, amount: u64, nonce: u64) -> Result<()> {
+pub fn handler(ctx: Context<DepositExternalWalletUsdc>, amount: u64, nonce: u64) -> Result<()> {
     require!(amount > 0, TradestarsArenaError::AmountTooSmall);
     require!(
         ctx.accounts.tusdc_token_program.key() == token_2022::ID,
@@ -100,7 +111,7 @@ pub fn handler(ctx: Context<DepositWalletUsdc>, amount: u64, nonce: u64) -> Resu
 
     let user_account = &mut ctx.accounts.user_account;
     if user_account.owner == Pubkey::default() {
-        user_account.owner = ctx.accounts.user.key();
+        user_account.owner = ctx.accounts.destination_user.key();
         user_account.total_balance = 0;
         user_account.in_play_debt = 0;
         user_account.last_nonce = 0;
@@ -108,7 +119,7 @@ pub fn handler(ctx: Context<DepositWalletUsdc>, amount: u64, nonce: u64) -> Resu
     }
 
     require!(
-        user_account.owner == ctx.accounts.user.key(),
+        user_account.owner == ctx.accounts.destination_user.key(),
         TradestarsArenaError::InvalidUserAccount
     );
 
@@ -117,9 +128,9 @@ pub fn handler(ctx: Context<DepositWalletUsdc>, amount: u64, nonce: u64) -> Resu
             ctx.accounts.usdc_token_program.to_account_info(),
             TransferChecked {
                 mint: ctx.accounts.usdc_mint.to_account_info(),
-                from: ctx.accounts.user_usdc.to_account_info(),
+                from: ctx.accounts.source_usdc.to_account_info(),
                 to: ctx.accounts.usdc_vault.to_account_info(),
-                authority: ctx.accounts.user.to_account_info(),
+                authority: ctx.accounts.source_authority.to_account_info(),
             },
         ),
         amount,
@@ -139,7 +150,7 @@ pub fn handler(ctx: Context<DepositWalletUsdc>, amount: u64, nonce: u64) -> Resu
             ctx.accounts.tusdc_token_program.to_account_info(),
             MintToChecked {
                 mint: ctx.accounts.tusdc_mint.to_account_info(),
-                to: ctx.accounts.user_tusdc.to_account_info(),
+                to: ctx.accounts.destination_tusdc.to_account_info(),
                 authority: ctx.accounts.platform_config.to_account_info(),
             },
             &[&[CONFIG_SEED, &[ctx.accounts.platform_config.bump]]],
@@ -148,8 +159,9 @@ pub fn handler(ctx: Context<DepositWalletUsdc>, amount: u64, nonce: u64) -> Resu
         TUSDC_DECIMALS,
     )?;
 
-    emit!(WalletUsdcDeposited {
-        user: ctx.accounts.user.key(),
+    emit!(ExternalWalletUsdcDeposited {
+        source_authority: ctx.accounts.source_authority.key(),
+        destination_user: ctx.accounts.destination_user.key(),
         amount,
         nonce,
         usdc_mint: ctx.accounts.usdc_mint.key(),

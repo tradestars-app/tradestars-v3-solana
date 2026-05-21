@@ -126,8 +126,9 @@ pub struct WalletDepositConfigUpdated {
 }
 
 #[event]
-pub struct WalletUsdcDeposited {
-    pub user: Pubkey,
+pub struct ExternalWalletUsdcDeposited {
+    pub source_authority: Pubkey,
+    pub destination_user: Pubkey,
     pub amount: u64,
     pub nonce: u64,
     pub usdc_mint: Pubkey,

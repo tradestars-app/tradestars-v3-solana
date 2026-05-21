@@ -121,9 +121,14 @@ describe("tradestars-arena", () => {
       program.programId
     )[0];
 
-  const walletDepositMarker = (user, nonce) =>
+  const externalWalletDepositMarker = (destinationUser, sourceAuthority, nonce) =>
     PublicKey.findProgramAddressSync(
-      [Buffer.from("wallet_deposit"), user.toBuffer(), u64LeBuffer(nonce)],
+      [
+        Buffer.from("wallet_deposit"),
+        destinationUser.toBuffer(),
+        sourceAuthority.toBuffer(),
+        u64LeBuffer(nonce),
+      ],
       program.programId
     )[0];
 
@@ -397,71 +402,95 @@ describe("tradestars-arena", () => {
     await depositCollateral(treasury.publicKey, 20_000_000, bytes32Buffer("treasury-deposit"));
   });
 
-  it("accepts signed wallet USDC deposits, mints playable USD, and blocks replays", async () => {
-    const user = Keypair.generate();
-    await airdrop(user.publicKey);
+  it("accepts external wallet USDC deposits into a TradeStars user account", async () => {
+    const sourceAuthority = Keypair.generate();
+    const destinationUser = Keypair.generate();
+    const feePayer = Keypair.generate();
+    await Promise.all([
+      airdrop(sourceAuthority.publicKey),
+      airdrop(feePayer.publicKey),
+    ]);
 
-    const userUsdc = usdcAta(user.publicKey);
-    await createAta(authority.payer, userUsdc, user.publicKey, walletUsdcMint);
+    const sourceUsdc = usdcAta(sourceAuthority.publicKey);
+    await createAta(
+      authority.payer,
+      sourceUsdc,
+      sourceAuthority.publicKey,
+      walletUsdcMint
+    );
     await mintTo(
       provider.connection,
       authority.payer,
       walletUsdcMint,
-      userUsdc,
+      sourceUsdc,
       authority.payer,
-      3_000_000,
+      5_000_000,
       [],
       undefined,
       TOKEN_PROGRAM_ID
     );
 
     await program.methods
-      .depositWalletUsdc(bn(1_500_000), bn(7))
+      .depositExternalWalletUsdc(bn(2_250_000), bn(11))
       .accountsPartial({
         platformConfig,
         walletDepositConfig,
         tusdcMint,
         usdcMint: walletUsdcMint,
-        user: user.publicKey,
-        userAccount: userPda(user.publicKey),
-        walletDepositMarker: walletDepositMarker(user.publicKey, 7),
-        userUsdc,
+        sourceAuthority: sourceAuthority.publicKey,
+        destinationUser: destinationUser.publicKey,
+        feePayer: feePayer.publicKey,
+        userAccount: userPda(destinationUser.publicKey),
+        walletDepositMarker: externalWalletDepositMarker(
+          destinationUser.publicKey,
+          sourceAuthority.publicKey,
+          11
+        ),
+        sourceUsdc,
         usdcVault: usdcAta(platformConfig, true),
-        userTusdc: tusdcAta(user.publicKey),
+        destinationTusdc: tusdcAta(destinationUser.publicKey),
         usdcTokenProgram: TOKEN_PROGRAM_ID,
         tusdcTokenProgram: TOKEN_2022_PROGRAM_ID,
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       })
-      .signers([user])
+      .signers([sourceAuthority, feePayer])
       .rpc();
 
-    const userAccount = await program.account.userAccount.fetch(userPda(user.publicKey));
-    assert.equal(userAccount.totalBalance.toNumber(), 1_500_000);
-    assert.equal(await getAtaAmount(user.publicKey), 1_500_000);
-    assert.equal(await getSplAtaAmount(user.publicKey), 1_500_000);
-    assert.equal(await getSplAtaAmount(platformConfig, true), 1_500_000);
+    const destinationAccount = await program.account.userAccount.fetch(
+      userPda(destinationUser.publicKey)
+    );
+    assert.equal(destinationAccount.totalBalance.toNumber(), 2_250_000);
+    assert.equal(destinationAccount.owner.toBase58(), destinationUser.publicKey.toBase58());
+    assert.equal(await getAtaAmount(destinationUser.publicKey), 2_250_000);
+    assert.equal(await getSplAtaAmount(sourceAuthority.publicKey), 2_750_000);
 
     await expectFailure(
       program.methods
-        .depositWalletUsdc(bn(1), bn(7))
+        .depositExternalWalletUsdc(bn(1), bn(11))
         .accountsPartial({
           platformConfig,
           walletDepositConfig,
           tusdcMint,
           usdcMint: walletUsdcMint,
-          user: user.publicKey,
-          userAccount: userPda(user.publicKey),
-          walletDepositMarker: walletDepositMarker(user.publicKey, 7),
-          userUsdc,
+          sourceAuthority: sourceAuthority.publicKey,
+          destinationUser: destinationUser.publicKey,
+          feePayer: feePayer.publicKey,
+          userAccount: userPda(destinationUser.publicKey),
+          walletDepositMarker: externalWalletDepositMarker(
+            destinationUser.publicKey,
+            sourceAuthority.publicKey,
+            11
+          ),
+          sourceUsdc,
           usdcVault: usdcAta(platformConfig, true),
-          userTusdc: tusdcAta(user.publicKey),
+          destinationTusdc: tusdcAta(destinationUser.publicKey),
           usdcTokenProgram: TOKEN_PROGRAM_ID,
           tusdcTokenProgram: TOKEN_2022_PROGRAM_ID,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
-        .signers([user])
+        .signers([sourceAuthority, feePayer])
         .rpc(),
       "already in use"
     );
